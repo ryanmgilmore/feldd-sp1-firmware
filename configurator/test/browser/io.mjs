@@ -1,0 +1,37 @@
+import puppeteer from 'puppeteer-core';
+import fs from 'node:fs';
+const DL = new URL('./dl/', import.meta.url).pathname;
+const browser = await puppeteer.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new' });
+const page = await browser.newPage();
+const errors = []; page.on('pageerror', (e) => errors.push(e.message)); page.on('dialog', (d) => d.accept());
+const cdp = await page.createCDPSession();
+await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL });
+await page.goto(`${process.env.BASE || 'http://localhost:8765'}/index.html?demo=1`);
+await page.waitForFunction(() => document.getElementById('conn-status').textContent.includes('demo'));
+await page.evaluate(() => [...document.querySelectorAll('#jack-body button')].find((b) => b.textContent === 'sync').click());
+await page.click('#btn-export');
+await new Promise((r) => setTimeout(r, 800));
+const f = fs.readdirSync(DL).find((x) => x.endsWith('.feldd'));
+const obj = JSON.parse(fs.readFileSync(DL + f, 'utf8'));
+console.log('export file', f, 'format', obj.format, 'jack.mode', obj.jack?.mode, 'labels', !!obj.labels);
+// v9-style file: drop jack, version 9
+const v9 = { ...obj, version: 9 }; delete v9.jack; v9.name = 'from feldd.com';
+fs.writeFileSync(DL + 'v9.feldd', JSON.stringify(v9));
+await page.evaluate(() => document.querySelectorAll('#slots li')[2].click());
+await new Promise((r) => setTimeout(r, 300));
+const input = await page.$('#file-import');
+await input.uploadFile(DL + 'v9.feldd');
+await new Promise((r) => setTimeout(r, 400));
+const r = await page.evaluate(() => ({ name: document.querySelectorAll('#slots li')[2].textContent, jackMidi: [...document.querySelectorAll('#jack-body button')].find((b) => b.textContent === 'MIDI out')?.getAttribute('aria-selected'), err: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent }));
+console.log('v9 import ->', JSON.stringify(r));
+await input.uploadFile(DL + f);
+await new Promise((r) => setTimeout(r, 400));
+const r2 = await page.evaluate(() => ({ sync: [...document.querySelectorAll('#jack-body button')].find((b) => b.textContent === 'sync')?.getAttribute('aria-selected'), label: document.querySelector('.card[data-ctl="f0"] .lbl')?.textContent }));
+console.log('v10 import ->', JSON.stringify(r2));
+// bundle
+await page.click('#btn-export-all');
+await new Promise((r) => setTimeout(r, 800));
+const b = JSON.parse(fs.readFileSync(DL + 'feldd-all-profiles.feldd', 'utf8'));
+console.log('bundle', b.format, b.version, b.profiles.length, 'first jack', JSON.stringify(b.profiles[0].profile.jack?.mode));
+console.log('ERRORS', errors.length ? errors : 'none');
+await browser.close();

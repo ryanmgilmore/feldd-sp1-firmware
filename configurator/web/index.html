@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SP-1 Configurator</title>
+<meta name="description" content="Configure feldd profiles on a Teenage Engineering SP-1 over WebSerial — mappings, layers, the TRS jack's role per profile, and MIDI thru.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect x=%223%22 y=%221%22 width=%2210%22 height=%2214%22 rx=%222%22 fill=%22%23e8590c%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark">feldd</span><span class="sep">/</span><span>sp-1 configurator</span></div>
+  <div class="conn">
+    <span id="conn-status" class="status">not connected</span>
+    <button id="btn-connect" class="primary">Connect your SP-1 →</button>
+    <button id="btn-demo" class="ghost">Demo</button>
+    <button id="btn-disconnect" class="ghost" hidden>Disconnect</button>
+    <button id="btn-theme" class="icon" aria-label="Switch theme" title="Switch theme">◐</button>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+<div id="error" class="error" role="alert" hidden></div>
+
+<main class="layout">
+  <!-- left: library + device-level settings -->
+  <aside class="col col-left">
+    <section class="panel" id="librarian">
+      <h2>Librarian <span class="hint" title="your 8 on-device profile slots for the selected mode. pick one to edit; double-click a name to rename it; a dot means it has unsaved changes.">?</span></h2>
+      <div class="seg" id="mode-tabs" role="tablist" aria-label="device mode">
+        <button role="tab" data-mode="0" aria-selected="true">MIDI</button>
+        <button role="tab" data-mode="1" aria-selected="false">Keyboard</button>
+      </div>
+      <ol id="slots" class="slots"></ol>
+      <div class="row wrap">
+        <button id="btn-dup" title="copy this profile into the next free slot.">Duplicate</button>
+        <button id="btn-reset" title="restore this slot to the default mapping (re-reads the slot on a connected device).">Reset</button>
+        <button id="btn-export" title=".feldd is a small text file of one profile. export to back it up or share it.">Export</button>
+        <button id="btn-export-all" title="save every slot in both modes (up to 16 profiles) to one .feldd backup.">Export all</button>
+        <button id="btn-import" title="load a .feldd file: a single profile drops into the active slot, a full-device backup restores all slots (after a confirm).">Import</button>
+        <input id="file-import" type="file" accept=".feldd,application/json" hidden>
+      </div>
+    </section>
+
+    <section class="panel" id="device-settings">
+      <h2>Device <span class="hint" title="settings that belong to the SP-1, not to a profile. they apply immediately and persist on the device.">?</span></h2>
+      <p class="muted" id="device-offline">Connect to change device settings.</p>
+      <div id="device-online" hidden>
+        <div class="setting">
+          <span class="label">MIDI thru USB → TRS <span class="hint" title="forwards notes and CCs arriving over USB out the 3.5 mm TRS jack, so the SP-1 works as a USB-to-TRS bridge. Only while the jack is in MIDI mode; in trigger or sync mode thru is inert. Off by default.">?</span></span>
+          <div class="seg small" id="thru-trs"><button data-v="0">off</button><button data-v="1">on</button></div>
+        </div>
+        <div class="setting" id="row-blethru" hidden>
+          <span class="label">MIDI thru USB → Bluetooth <span class="hint" title="forwards notes and CCs arriving over USB out over Bluetooth MIDI, independent of the TRS switch. Bluetooth is one-way: the SP-1 does not receive Bluetooth MIDI. Off by default.">?</span></span>
+          <div class="seg small" id="thru-ble"><button data-v="0">off</button><button data-v="1">on</button></div>
+        </div>
+        <p class="muted small" id="fw-line"></p>
+      </div>
+    </section>
+  </aside>
+
+  <!-- centre: the instrument -->
+  <section class="col col-mid">
+    <div class="panel device-panel">
+      <div id="device"></div>
+      <div class="monitor" id="monitor">
+        <h2>Live monitor <span class="muted" id="monitor-layer">layer 1</span> <span class="hint" title="when an SP-1 is connected, shows live fader values and button presses so you can verify your mapping.">?</span></h2>
+        <p class="muted small" id="monitor-offline">Connect a device to see live fader and button activity.</p>
+        <dl class="mon-grid" id="mon-grid"></dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- right: the editor -->
+  <section class="col col-right">
+    <div class="toolbar panel">
+      <div class="row wrap">
+        <label class="inline" title="sets the MIDI channel (1-16) for every control on every layer of this profile at once.">all CH
+          <input id="all-ch" type="number" min="1" max="16" value="1"></label>
+        <div class="seg small" id="layer-tabs" aria-label="layer"></div>
+        <div class="seg small" id="view-tabs"><button data-v="basic">basic</button><button data-v="advanced" aria-selected="true">advanced</button></div>
+      </div>
+      <div class="row wrap">
+        <select id="starter" title="Load the starter pack into all 8 slots, or one profile into this slot, then Save to device"></select>
+        <details class="autofill">
+          <summary title="numbers the faders sequentially in one click.">autofill cc</summary>
+          <div class="row wrap">
+            <select id="af-scope"><option value="layer">this layer</option><option value="profile">this profile</option><option value="all">all</option></select>
+            <select id="af-dir"><option value="up">ascending (from 0)</option><option value="down">descending (from 127)</option></select>
+            <label class="inline">start <input id="af-start" type="number" min="0" max="127" value="0"></label>
+            <button id="af-fill">Fill</button>
+          </div>
+        </details>
+        <span class="spacer"></span>
+        <button id="btn-save" class="primary" disabled title="writes this profile to the active slot on a connected SP-1.">Saved</button>
+        <button id="btn-save-all" disabled title="writes every changed profile in this mode to the SP-1 at once.">Save all</button>
+      </div>
+    </div>
+
+    <section class="panel" id="jack-panel">
+      <h2>TRS jack <span class="muted small">this profile</span> <span class="hint" title="what the 3.5 mm TRS jack does while this profile is active. Switching profiles switches the jack. Trigger and sync need a device that reports trsout (profile v10 firmware).">?</span></h2>
+      <p class="muted small" id="jack-unsupported" hidden>This device's firmware has no selectable jack (it does not report <code>trsout</code>). The jack is MIDI out.</p>
+      <div id="jack-body"></div>
+    </section>
+
+    <section class="panel" id="clock-panel"></section>
+
+    <section id="editor"></section>
+  </section>
+</main>
+
+<section class="panel log" id="log-panel">
+  <h2>serial log <span class="muted" id="log-count">· 0</span>
+    <button id="log-copy" class="ghost small">copy</button>
+    <button id="log-clear" class="ghost small">clear</button>
+    <button id="log-toggle" class="ghost small">show</button></h2>
+  <pre id="log" hidden>no traffic yet — connect to see frames</pre>
+</section>
+
+<footer class="foot muted small">
+  Built on <a href="https://github.com/bnjreece/feldd-sp1-firmware">feldd</a> by Benjamin Reece; device drawing and profile codec ported from
+  <a href="https://feldd.com/sp-1/configure">feldd.com</a>. Not affiliated with Teenage Engineering. Chromium browsers (WebSerial).
+</footer>
+</body>
+</html>
