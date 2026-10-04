@@ -215,7 +215,11 @@ export class MockSp1Serial {
   async close() { this.connected = false; clearInterval(this.timer); this.timer = null; this.fire('disconnect', {}); }
   on(event, listener) { (this.listeners[event] ||= []).push(listener); }
   fire(event, message) { (this.listeners[event] || []).forEach(listener => listener(message)); }
+  // A real SP-1 answers over USB a few ms later; replying synchronously hid a
+  // re-render race in the configurator (rename wiped out by setactive's reply).
+  latencyMs = 15;
   async request(verb, args = {}) {
+    if (this.latencyMs) await new Promise((resolve) => setTimeout(resolve, this.latencyMs));
     switch (verb) {
       case 'hello': return {
         t: 'hello_r', ok: true, proto: 1, pver: 10, fw: '0.1.0-demo', profiles: 16,

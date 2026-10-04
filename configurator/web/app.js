@@ -460,25 +460,54 @@ function renderHeader() {
 
 function renderLibrarian() {
   document.querySelectorAll('#mode-tabs button').forEach((b) => b.setAttribute('aria-selected', String(Number(b.dataset.mode) === S.mode)));
-  const ol = $('slots'); ol.replaceChildren();
+  // Removing a focused rename box fires its blur synchronously, mid-rebuild;
+  // that blur must not commit and end the rename.
+  const ol = $('slots');
+  const prevBox = ol.querySelector('input');
+  const prevSel = prevBox ? [prevBox.selectionStart, prevBox.selectionEnd] : null;
+  S.rebuildingSlots = true; ol.replaceChildren(); S.rebuildingSlots = false;
+  // A rename lives in state, not in a stray DOM node: selecting the slot sends
+  // `setactive`, and the device's reply re-renders this list a few ms later --
+  // which, when the box was only a DOM node, wiped it out mid-double-click.
+  let renameInput = null;
   S.banks[S.mode].forEach((e, i) => {
     const name = e.working ? (e.working.name || 'untitled') : 'empty';
-    const nameEl = h('span', { class: `name${e.working ? '' : ' empty'}`, title: 'double-click to rename' }, name);
+    const renaming = S.rename && S.rename.mode === S.mode && S.rename.slot === i && e.working;
+    let nameEl;
+    if (renaming) {
+      nameEl = h('input', { type: 'text', value: S.rename.draft, maxlength: 16, 'aria-label': `rename profile in slot ${i + 1}` });
+      const done = (commit) => {
+        if (!S.rename) return;
+        if (commit) e.working.name = truncUtf8(nameEl.value, 16);
+        S.rename = null; render();
+      };
+      nameEl.addEventListener('input', () => { if (S.rename) S.rename.draft = nameEl.value; });
+      nameEl.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') done(true); if (ev.key === 'Escape') done(false); });
+      nameEl.addEventListener('click', (ev) => ev.stopPropagation());
+      nameEl.addEventListener('dblclick', (ev) => ev.stopPropagation());
+      // A re-render replaces this node; only a blur on the LIVE box commits.
+      nameEl.addEventListener('blur', () => { if (!S.rebuildingSlots && nameEl.isConnected) done(true); });
+      renameInput = nameEl;
+    } else {
+      nameEl = h('span', { class: `name${e.working ? '' : ' empty'}`, title: 'double-click to rename' }, name);
+    }
     const li = h('li', {
       class: [i === S.slot && 'sel', S.dev && S.activeAbs === S.mode * SLOTS + i && 'active'].filter(Boolean).join(' '),
-      onclick: () => selectSlot(i),
+      onclick: () => { if (!renaming) selectSlot(i); },
       ondblclick: () => {
-        if (!e.working) return;
-        const inp = h('input', { type: 'text', value: e.working.name || '', maxlength: 16, 'aria-label': `rename profile in slot ${i + 1}` });
-        const done = (commit) => { if (commit) e.working.name = truncUtf8(inp.value, 16); render(); };
-        inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') done(true); if (ev.key === 'Escape') done(false); });
-        inp.addEventListener('blur', () => done(true));
-        nameEl.replaceWith(inp); inp.focus(); inp.select();
+        if (!e.working || renaming) return;
+        S.rename = { mode: S.mode, slot: i, draft: e.working.name || '', fresh: true };
+        render();
       },
     }, h('span', { class: 'num' }, String(i + 1).padStart(2, '0')), nameEl,
       h('span', { class: `dot ${e.working ? (isDirty(e) ? 'dirty' : (e.saved ? 'saved' : '')) : ''}`, title: isDirty(e) ? 'unsaved changes' : 'saved' }));
     ol.append(li);
   });
+  if (renameInput) {
+    renameInput.focus();
+    if (S.rename.fresh) { renameInput.select(); S.rename.fresh = false; }
+    else if (prevSel) renameInput.setSelectionRange(prevSel[0], prevSel[1]);   // as the user left it
+  }
   $('btn-dup').disabled = !prof();
   $('btn-export').disabled = !prof();
   $('btn-export-all').disabled = !S.banks.some((b) => b.some((e) => e.working));

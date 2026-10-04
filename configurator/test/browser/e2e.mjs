@@ -22,6 +22,18 @@ const out = [];
 const check = (name, cond) => out.push(`${cond ? 'PASS' : 'FAIL'} ${name}`);
 
 check('initial save button reads Saved', (await txt('#btn-save')) === 'Saved');
+// Rename by a real double-click, then wait past setactive's reply before typing:
+// the reply re-renders the list, which used to wipe the box out.
+await page.click('#slots li:nth-child(4) .name', { clickCount: 2 });
+await new Promise((r) => setTimeout(r, 250));
+check('rename box survives the setactive reply', !!(await page.$('#slots li:nth-child(4) input')));
+await page.keyboard.type('JACK-MIDI');
+await new Promise((r) => setTimeout(r, 100));
+await page.keyboard.press('Enter');
+await new Promise((r) => setTimeout(r, 150));
+check('rename sticks', (await page.$eval('#slots li:nth-child(4) .name', (e) => e.textContent)) === 'JACK-MIDI');
+await page.evaluate(() => document.querySelectorAll('#slots li')[0].click());
+await new Promise((r) => setTimeout(r, 200));
 await clickText('#jack-body', 'trigger');
 check('trigger makes the profile dirty', (await txt('#btn-save')).startsWith('Save changes'));
 check('trigger shows note + channel', await page.$eval('#jack-body', (e) => /note/.test(e.textContent) && /channel/.test(e.textContent)));
