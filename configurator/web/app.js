@@ -31,7 +31,9 @@ const noteName = (n) => `${NOTE_NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
 
 // Sync division: ticks per pulse at 24 PPQN, offered by musical name
 // (ticks per pulse at 24 PPQN). Any other stored value 1..24 is shown as raw ticks.
-const SYNC_DIVS = [[24, '1/4'], [12, '1/8 (2 PPQN, PO / Volca)'], [8, '1/8T'], [6, '1/16'], [4, '1/16T'], [3, '1/32'], [2, '1/48'], [1, 'every tick (24 PPQN)']];
+// Short labels: eight of these sit side by side in the per-layer grid. The
+// gear-facing explanation is one line under the grid, not in every option.
+const SYNC_DIVS = [[24, '1/4'], [12, '1/8'], [8, '1/8T'], [6, '1/16'], [4, '1/16T'], [3, '1/32'], [2, '1/48'], [1, '1/96']];
 const JACK_MODES = [[0, 'MIDI out'], [1, 'trigger'], [2, 'sync']];
 
 // Keyboard mode: HID usages and modifier bits (feldd.com's encoding).
@@ -613,7 +615,7 @@ function renderJack() {
     uniform ? 'different per layer' : 'different per layer (layers differ)'));
   body.append(h('p', { class: 'muted small' }, j.mode === 1
     ? 'Pulses when a matching note arrives — from USB or from a button mapped to that note. Layers let one profile trigger on a kick in L1 and a rimshot in L2.'
-    : 'Pulses on a division of MIDI clock — from USB or the SP-1\'s own clock.'));
+    : 'Pulses on a division of MIDI clock — from USB or the SP-1\'s own clock. 1/8 is 2 PPQN, the Pocket Operator / Volca rate; 1/96 is every clock tick (24 PPQN).'));
   renderJackDiag(body);
 }
 function renderJackDiag(body) {
