@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdint.h>
 #include "protocol.h"
+#include "trigger_out.h"
 
 /* ---------- mock store ---------- */
 /* §0 mode-scoped banks: 16 GLOBAL slots (read/write/reset axis), 8 per bank.
@@ -207,6 +208,17 @@ static struct profile make_full_profile(void)
     }
     for (int i = 0; i < 16; i++)
         p.name[i] = (uint8_t)('A' + i);
+    /* v10 appended jack settings. Required for the profile to be VALID under the
+     * current rules: pulse_width = 0 is rejected on purpose, so a zeroed tail
+     * would make every write_r in this file fail with BAD_VERSION. */
+    p.trs_mode    = TRS_MODE_DEFAULT;
+    p.pulse_width = TRS_WIDTH_DEFAULT;
+    for (int L = 0; L < NUM_LAYERS; L++) {
+        p.trigger_note[L]    = TRIGGER_NOTE_DEFAULT;
+        p.trigger_channel[L] = TRS_CHAN_DEFAULT;
+        p.sync_div[L]        = TRIGGER_DIV_DEFAULT;
+    }
+    p._rsvd_v10 = 0;
     return p;
 }
 

@@ -57,10 +57,17 @@ typedef void (*profile_fill_fn)(struct profile *out, int src_len);
  * A future version that appends adds its predecessor's wire length. */
 static inline int profile_migrate_src_ok(size_t len)
 {
+	/* v9's 1038 bytes. v10 APPENDED to them without touching a single existing
+	 * field, so every v9 byte still means the same thing at the same offset and
+	 * widening is safe. This is the first and only entry.
+	 *
+	 * v8's 528 bytes are NOT eligible and must never be added: v9 resized the
+	 * interior layer/ext/chord arrays, so a v8 image is not a prefix of v9, and
+	 * copying it forward would produce a corrupt profile from a plausible input. */
+	if (len == 1038u) {
+		return 1;
+	}
 	(void)len;
-	/* case sizeof(v9-and-earlier): NOT safe — v9 was a layout break, not an
-	 * append. The first legitimate entry will be added by the first version
-	 * that appends to v9's 1038 bytes. */
 	return 0;
 }
 

@@ -34,6 +34,7 @@
 #include "usb_midi1.h"
 #include "midi1_codec.h"
 #include "midi_rt_ring.h"
+#include "held_notes.h"
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/devicetree.h>
@@ -45,6 +46,20 @@ static const struct gpio_dt_spec ring =
     GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), midi_ring_gpios);
 
 static struct midi_rt_ring trs_ring;
+
+/* Which notes the JACK is currently sounding — see held_notes.h. Fed from the one
+ * choke point both producers pass through (trs_enqueue_msg), so the controller
+ * path and the MIDI-thru path are covered by the same three lines. */
+static struct held_notes trs_held;
+
+/* When the TX ISR last handed a byte to the UART, in cycles. midi_out_trs_idle()
+ * needs "has the last byte finished shifting out", and uart_irq_tx_complete() does
+ * not answer that on an idle, TX-disabled UARTE — it returns 0, so a gate built on
+ * it never opens. Measured on hardware 2026-08-05: the deferred handoff to a pulse
+ * mode never completed, while the immediate handoff back to MIDI always did.
+ *
+ * Timing it instead is driver-independent and cannot get stuck. */
+static volatile uint32_t trs_last_tx_cycles;
 
 /* UART TX ISR: drain the priority ring into the TX FIFO one byte at a time; stop
  * the TX IRQ when the ring is empty. */
@@ -63,6 +78,7 @@ static void trs_uart_isr(const struct device *dev, void *user_data)
             uart_irq_tx_disable(dev);
             break;
         }
+        trs_last_tx_cycles = k_cycle_get_32();
         uart_fifo_fill(dev, &b, 1);
     }
 }
@@ -95,9 +111,82 @@ static void trs_enqueue_msg(const uint8_t *b, uint8_t len)
         return;   /* as trs_enqueue: the UART does not own the pin right now */
     }
     unsigned int key = irq_lock();
-    (void)midi_rt_put_msg(&trs_ring, b, len);
+    bool admitted = midi_rt_put_msg(&trs_ring, b, len);
+    /* Track ONLY what was admitted. put_msg is all-or-nothing and returns false
+     * on a full ring, which with MIDI thru enabled is ordinary rather than a
+     * corner case: a dropped Note-On never reached the wire and would become a
+     * phantom, while a dropped Note-Off means the note IS still sounding and its
+     * bit must stay set. Both are handled by simply not feeding a refused
+     * message. Inside the lock so the two producers cannot interleave. */
+    if (admitted && len >= 3) {
+        held_notes_feed(&trs_held, b[0], b[1], b[2]);
+    }
     irq_unlock(key);
     uart_irq_tx_enable(trs);
+}
+
+/* Discard everything queued and release every note the jack is sounding.
+ *
+ * Called when the jack is about to stop being a MIDI output. Order matters and is
+ * the same rule chord_flush_all() already follows ("Fix 6"): PURGE FIRST, then
+ * emit. Emitting first would let a stale queued Note-On drain afterwards and
+ * re-strand the very note just released.
+ *
+ * Discarding is right for the queue and wrong for the notes, which is why they
+ * are handled separately. Queued real-time bytes are worthless late — a stale
+ * burst of clock ticks jitters the downstream tempo worse than silence — and
+ * queued voice messages are for a jack that is about to stop carrying MIDI. But
+ * a note already sounding has no other way home: the host does not learn the jack
+ * is gone and will send its own Note-Off into what is now a pulse output.
+ *
+ * Only notes the JACK sent are released. Not All Notes Off, which would kill
+ * notes the SP-1 never originated — indefensible when playing into an instrument
+ * running its own sequencer — and not All Sound Off, which guillotines release
+ * tails. */
+void midi_out_trs_release_all(void)
+{
+    unsigned int key = irq_lock();
+    midi_rt_ring_init(&trs_ring);          /* purge BEFORE emitting */
+    struct held_notes snapshot = trs_held;
+    held_notes_init(&trs_held);
+    irq_unlock(key);
+
+    int cursor = 0;
+    uint8_t ch, note;
+    while (held_notes_next(&snapshot, &cursor, &ch, &note)) {
+        uint8_t off[3] = { (uint8_t)(0x80u | (ch & 0x0Fu)), note, 0u };
+        key = irq_lock();
+        (void)midi_rt_put_msg(&trs_ring, off, 3);
+        irq_unlock(key);
+    }
+    uart_irq_tx_enable(trs);
+}
+
+/* Has everything handed to the UART actually reached the wire?
+ *
+ * A ring reporting empty is NOT the same as an idle line: up to one byte (320 us
+ * at 31250 baud) can still be in the UARTE's shift register. Disconnecting
+ * PSEL.TXD at that moment truncates it electrically — the exact corruption
+ * midi_rt_put_msg's all-or-nothing admission exists to prevent, one layer below
+ * where any of its host tests can see it. */
+/* One MIDI byte is 10 bits at 31250 baud = 320 us. Wait THREE byte-times after the
+ * last byte was queued: the UARTE's own FIFO can still hold a byte or two behind
+ * the one shifting, and ~1 ms is imperceptible on a profile switch that costs a
+ * human hundreds of milliseconds. Erring long is free here; erring short truncates
+ * a byte electrically, which is the one failure the ring's atomicity cannot catch. */
+#define TRS_DRAIN_GUARD_US 960u
+
+int midi_out_trs_idle(void)
+{
+    unsigned int key = irq_lock();
+    int empty = !midi_rt_pending(&trs_ring);
+    uint32_t last = trs_last_tx_cycles;
+    irq_unlock(key);
+    if (!empty) {
+        return 0;
+    }
+    uint32_t elapsed_us = k_cyc_to_us_floor32(k_cycle_get_32() - last);
+    return elapsed_us >= TRS_DRAIN_GUARD_US;
 }
 
 int midi_out_init(void)
@@ -176,6 +265,8 @@ static void midi1_send(const struct midi_msg *m) { (void)m; }
 int  midi_out_init(void) { return 0; }
 void midi_out_rt(uint8_t status) { (void)status; }
 void midi_out_thru(const uint8_t *bytes, uint8_t len) { (void)bytes; (void)len; }
+void midi_out_trs_release_all(void) { }
+int  midi_out_trs_idle(void) { return 1; }
 
 #endif /* MIDI_OUT_HOST_TEST */
 

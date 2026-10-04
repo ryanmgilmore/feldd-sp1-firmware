@@ -42,28 +42,62 @@ static char g_uid[33];
  * pin. Store first: if NVS refuses, the hardware is left alone and the device
  * still matches what the configurator reads back. */
 static uint8_t cdc_get_trshw(void) { return trigger_out_hw_pulse() ? 1u : 0u; }
-/* The module's LIVE mode. get_trsmode reports what NVS stores; if the two ever
- * disagree the pin is not doing what the setting claims, which is exactly the
- * kind of fault that is invisible from the host otherwise. */
+/* v10: every trs* getter now reports the LIVE module state.
+ *
+ * They used to read the device-level NVS records, which no longer exist — the
+ * migration seeds them into the profiles and deletes them. Left pointing at
+ * librarian they returned the compiled default for a deleted record, so a device
+ * correctly running trigger mode on channel 10 reported MIDI on omni. A readback
+ * that disagrees with the hardware is worse than no readback, because it is the
+ * thing you reach for when something looks wrong.
+ *
+ * trslive is kept as a separate verb even though trsmode now returns the same
+ * value: it costs nothing, and a future setting that IS stored somewhere else
+ * would want the two to be distinguishable again. */
 static uint8_t cdc_get_trslive(void) { return (uint8_t)trigger_out_mode(); }
 static uint32_t cdc_get_trsfires(void) { return trigger_out_fire_count(); }
 static uint8_t cdc_get_trsbusy(void) { return trigger_out_busy() ? 1u : 0u; }
+/* ---- v10: the trs* verbs are LIVE-ONLY -------------------------------------
+ *
+ * These used to write a 1-byte NVS record each. The settings now live in the
+ * profile, so persisting from here would mean a read-modify-write of the whole
+ * 1065-byte profile per call — ~119x the flash, and a garbage-collection erase
+ * (~85 ms against an 8 ms control tick) roughly every third call.
+ *
+ * The deciding argument is not cost but structure. A fader mapped to the sync
+ * divisor is a planned feature; at ~30 updates/second a write-through sweep is
+ * ~10 sector erases/second, which exhausts the flash in about two hours. Making
+ * these verbs live-only removes that failure mode instead of leaving a rule a
+ * future contributor has to remember.
+ *
+ * So: they configure the RUNNING jack and touch no flash. Persisting is what the
+ * profile `write` verb is for — the same read-modify-write every other
+ * profile-scoped setting already uses. A live tweak is therefore lost on the next
+ * profile or layer change, which is correct for a bench override. */
+/* Shims where the module's type or unit differs from the protocol's byte. */
+static uint8_t cdc_get_trsmode_live(void)  { return (uint8_t)trigger_out_mode(); }
+static uint8_t cdc_get_trswidth_live(void)
+{
+    /* the wire carries 100 us units; the module keeps microseconds */
+    uint32_t us = trigger_out_width_us();
+    uint32_t u  = us / TRS_WIDTH_UNIT_US;
+    return (uint8_t)(u > 255u ? 255u : (u == 0u ? 1u : u));
+}
+
 static int cdc_set_trschan(uint8_t v)
 {
-    int rc = librarian_set_trs_chan(v);
-    if (rc == 0) {
-        (void)trigger_out_set_channel(v);
+    if (!trs_chan_valid(v)) {
+        return -EINVAL;
     }
-    return rc;
+    return trigger_out_set_channel(v);
 }
 
 static int cdc_set_trswidth(uint8_t v)
 {
-    int rc = librarian_set_trs_width(v);
-    if (rc == 0) {
-        (void)trigger_out_set_width_us((uint32_t)v * TRS_WIDTH_UNIT_US);
+    if (!trs_width_valid(v)) {
+        return -EINVAL;
     }
-    return rc;
+    return trigger_out_set_width_us((uint32_t)v * TRS_WIDTH_UNIT_US);
 }
 
 static uint8_t cdc_get_trsring(void) { return trigger_out_ring_on() ? 1u : 0u; }
@@ -78,20 +112,21 @@ static void cdc_trspulse(void) { trigger_out_fire(); }
 
 static int cdc_set_trsmode(uint8_t v)
 {
-    int rc = librarian_set_trs_mode(v);
-    if (rc == 0) {
-        (void)trigger_out_set_mode((enum trs_mode)v);
+    if (!trs_mode_valid(v)) {
+        return -EINVAL;
     }
-    return rc;
+    /* Straight to the module, not through the deferred path in main.c: this is a
+     * bench verb and the caller is a human at a terminal, not a profile switch
+     * mid-phrase. trigger_out_set_mode() still proves the pin handoff itself. */
+    return trigger_out_set_mode((enum trs_mode)v);
 }
 
 static int cdc_set_trsdiv(uint8_t v)
 {
-    int rc = librarian_set_trs_div(v);
-    if (rc == 0) {
-        (void)trigger_out_set_divider(v);
+    if (!trs_div_valid(v)) {
+        return -EINVAL;
     }
-    return rc;
+    return trigger_out_set_divider(v);
 }
 
 static const struct proto_store g_store = {
@@ -107,16 +142,16 @@ static const struct proto_store g_store = {
     .set_playrole = librarian_set_play_mode,
     .get_midithru = librarian_midi_thru,
     .set_midithru = librarian_set_midi_thru,
-    .get_trsmode  = librarian_trs_mode,
+    .get_trsmode  = cdc_get_trsmode_live,
     .set_trsmode  = cdc_set_trsmode,
-    .get_trsdiv   = librarian_trs_div,
+    .get_trsdiv   = trigger_out_divider,
     .get_trshw    = cdc_get_trshw,
     .get_trslive  = cdc_get_trslive,
     .get_trsfires = cdc_get_trsfires,
     .get_trsbusy  = cdc_get_trsbusy,
-    .get_trschan  = librarian_trs_chan,
+    .get_trschan  = trigger_out_channel,
     .set_trschan  = cdc_set_trschan,
-    .get_trswidth = librarian_trs_width,
+    .get_trswidth = cdc_get_trswidth_live,
     .set_trswidth = cdc_set_trswidth,
     .get_trsring  = cdc_get_trsring,
     .set_trsring  = cdc_set_trsring,

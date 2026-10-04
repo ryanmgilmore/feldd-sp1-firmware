@@ -475,6 +475,19 @@ static void make_default(int slot, struct profile *p)
 
     /* name[16], NUL-padded by the memset above. */
     memcpy(p->name, nm, strlen(nm));
+
+    /* v10 jack settings. A factory profile must be VALID under the CURRENT rules,
+     * and pulse_width = 0 is rejected on purpose — so these cannot be left as the
+     * caller's zeroes. Same values profile_fill_missing() writes when upgrading a
+     * stored v9 profile, so a seeded slot and a migrated slot agree. */
+    p->trs_mode    = TRS_MODE_DEFAULT;
+    p->pulse_width = TRS_WIDTH_DEFAULT;
+    for (int L = 0; L < NUM_LAYERS; L++) {
+        p->trigger_note[L]    = TRIGGER_NOTE_DEFAULT;
+        p->trigger_channel[L] = TRS_CHAN_DEFAULT;
+        p->sync_div[L]        = TRIGGER_DIV_DEFAULT;
+    }
+    p->_rsvd_v10 = 0;
 }
 
 /* Adapters so fs_bring_up's mixed-geometry erase drives the pure, host-tested
@@ -601,6 +614,78 @@ static int seed_defaults(void)
  * which zeroes mode and every bank's active index — a migrated device would come
  * back in MIDI mode on slot 0, having silently lost where the user was. Only the
  * version byte changes. */
+/* ---- retiring the device-level jack records --------------------------------
+ *
+ * Until now the jack's four settings lived in their own 1-byte NVS records
+ * (LIB_ID_TRS_MODE/DIV/WIDTH/CHAN, ids 4..7). v10 moves the same concepts into
+ * the profile. They must NOT both stay live, or every read needs a precedence
+ * rule and every user needs to know it.
+ *
+ * So the migration SEEDS from them and then deletes them. Seeding beats filling
+ * from compiled defaults for a reason worth stating: it preserves what the user
+ * actually configured. Someone running trigger mode on channel 10 at 8 ms keeps
+ * exactly that, rather than being reset to MIDI. It also collapses two cases into
+ * one code path, because the existing trs_*_load(present, stored) helpers already
+ * return the compiled default when a record is absent — which is precisely the
+ * "no record was ever written" case. */
+static struct {
+    uint8_t mode, div, width, chan;
+} g_legacy_trs;
+
+static void migrate_capture_legacy(void)
+{
+    uint8_t v;
+    ssize_t r;
+    r = nvs_read(&fs, LIB_ID_TRS_MODE,  &v, sizeof(v));
+    g_legacy_trs.mode  = trs_mode_load(r == (ssize_t)sizeof(v), v);
+    r = nvs_read(&fs, LIB_ID_TRS_DIV,   &v, sizeof(v));
+    g_legacy_trs.div   = trs_div_load(r == (ssize_t)sizeof(v), v);
+    r = nvs_read(&fs, LIB_ID_TRS_WIDTH, &v, sizeof(v));
+    g_legacy_trs.width = trs_width_load(r == (ssize_t)sizeof(v), v);
+    r = nvs_read(&fs, LIB_ID_TRS_CHAN,  &v, sizeof(v));
+    g_legacy_trs.chan  = trs_chan_load(r == (ssize_t)sizeof(v), v);
+}
+
+/* Fill a widened profile's tail: the format's own defaults first, then the
+ * device-level values on top, so the user's configuration survives the move. */
+static void migrate_fill(struct profile *out, int wire)
+{
+    profile_fill_missing(out, wire);
+    if (wire > (int)offsetof(struct profile, trs_mode)) {
+        return;   /* the tail was already carried by the stored image */
+    }
+    out->trs_mode    = g_legacy_trs.mode;
+    out->pulse_width = g_legacy_trs.width;
+    for (int L = 0; L < NUM_LAYERS; L++) {
+        out->trigger_channel[L] = g_legacy_trs.chan;
+        out->sync_div[L]        = g_legacy_trs.div;
+        /* trigger_note has no device-level counterpart — there was one note
+         * for the whole device via trigger_out_set_match(), not in NVS — so the
+         * format default stands. */
+    }
+}
+
+/* Delete the four records once every slot AND the header are written. Order is
+ * load-bearing: deleting first would mean a power loss leaves the records gone
+ * with slots still unmigrated, and those would then seed from compiled defaults
+ * instead of the user's settings — a store where some profiles carry the old
+ * configuration and some do not. Deleting last leaves them orphaned on a power
+ * loss, which is harmless.
+ *
+ * Feed the watchdog between them: four deletes can force a GC erase, and this
+ * still runs before the control loop starts feeding. */
+static void migrate_retire_legacy(void)
+{
+    static const uint16_t ids[] = {
+        LIB_ID_TRS_MODE, LIB_ID_TRS_DIV, LIB_ID_TRS_WIDTH, LIB_ID_TRS_CHAN
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(ids); i++) {
+        feed_wdt();
+        (void)nvs_delete(&fs, ids[i]);
+    }
+    feed_wdt();
+}
+
 static int migrate_write_cb(void *ctx, int id)
 {
     struct lib_header *hdr = (struct lib_header *)ctx;
@@ -627,7 +712,7 @@ static int migrate_write_cb(void *ctx, int id)
 
     struct profile p;
     if (got < 0
-        || profile_migrate(raw, (size_t)got, &p, profile_fill_missing) != 0) {
+        || profile_migrate(raw, (size_t)got, &p, migrate_fill) != 0) {
         /* Absent, or a length no version appended to (see profile_migrate_src_ok).
          * Nothing here can be recovered, so this ONE slot falls back to defaults
          * rather than the whole store being wiped. */
@@ -639,7 +724,13 @@ static int migrate_write_cb(void *ctx, int id)
 /* Widen every stored slot into the current struct, then stamp the header. */
 static int migrate_all(struct lib_header *hdr)
 {
-    return seed_cadence_run(NUM_PROFILES, seed_feed_cb, migrate_write_cb, hdr);
+    migrate_capture_legacy();     /* read the device records BEFORE anything moves */
+    int rc = seed_cadence_run(NUM_PROFILES, seed_feed_cb, migrate_write_cb, hdr);
+    if (rc) {
+        return rc;                /* leave the records alone; the sweep re-runs */
+    }
+    migrate_retire_legacy();      /* only once every slot and the header are down */
+    return 0;
 }
 
 int librarian_init(void)

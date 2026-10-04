@@ -11,6 +11,7 @@
 #include "profile.h"
 #include "profile_migrate.h"
 #include "config_cdc.h"
+#include "trigger_out.h"   /* the one-byte codecs the v10 jack fields reuse verbatim */
 #include "clock_cfg.h"   /* per-profile MIDI-clock config packed into chord_flags[2..3] */
 
 /* Compile-time guard: the version wire boundaries (in profile_wire_len) MUST equal
@@ -26,7 +27,14 @@ PROFILE_STATIC_ASSERT(offsetof(struct profile, ext)              == 304,  v9_ext
 PROFILE_STATIC_ASSERT(offsetof(struct profile, chord6)           == 570,  v9_chord6_off);
 PROFILE_STATIC_ASSERT(offsetof(struct profile, fader_role)       == 1002, v9_fader_role_off);
 PROFILE_STATIC_ASSERT(offsetof(struct profile, chord_flags)      == 1034, v9_chord_flags_off);
-PROFILE_STATIC_ASSERT(sizeof(struct profile)                     == 1038, v9_sizeof);
+PROFILE_STATIC_ASSERT(offsetof(struct profile, trs_mode)         == 1038, v10_trs_mode_off);
+PROFILE_STATIC_ASSERT(offsetof(struct profile, trigger_note)     == 1040, v10_note_off);
+PROFILE_STATIC_ASSERT(offsetof(struct profile, trigger_channel)  == 1048, v10_chan_off);
+PROFILE_STATIC_ASSERT(offsetof(struct profile, sync_div)         == 1056, v10_div_off);
+PROFILE_STATIC_ASSERT(sizeof(struct profile)                     == 1065, v10_sizeof);
+/* v10 appends; the v9 image must remain untouched in front of it, or a stored v9
+ * profile is no longer a prefix and profile_migrate would widen it into garbage. */
+PROFILE_STATIC_ASSERT(offsetof(struct profile, chord_flags)      == 1034, v9_prefix_intact);
 
 /* Two limits constrain how large a profile may grow, and only ONE of them was
  * guarded. librarian.c asserts the NVS sector packing (~1352 B). The USB-CDC
@@ -71,8 +79,12 @@ int profile_wire_len(uint8_t version)
     case 6:  return 294;
     case 7:  return 294;   /* a v7 blob no longer round-trips full; its prefix is the v6 image (read-only path; firmware rejects v7 at validate) */
     case 8:  return 528;   /* pinned literal: v8 wire length is no longer == sizeof */
-    case 9:
-    default: return (int)sizeof(struct profile);   /* 1038 (v9, padded to a multiple of 3) */
+    case 9:  return 1038;  /* pinned literal: v9's wire length is no longer == sizeof.
+                            * Left falling through to sizeof, this silently breaks
+                            * every v9 blob the moment sizeof grows — the decoder
+                            * would measure 1038 bytes against 1065 and reject it. */
+    case 10:
+    default: return (int)sizeof(struct profile);   /* 1065 (v10, a multiple of 3) */
     }
 }
 
@@ -141,7 +153,27 @@ int profile_to_b64(const struct profile *p, char *out, int outcap)
  * `wire` is the decoded prefix length (so we know which version produced it). */
 void profile_fill_missing(struct profile *out, int wire)
 {
-    (void)out; (void)wire;   /* strict v9: a full 1038-byte blob carries every field */
+    if (out == 0) {
+        return;
+    }
+    /* v9 -> v10: the appended jack settings. Values are the existing device-level
+     * defaults, chosen so an upgraded device behaves EXACTLY as it did before —
+     * TRS_MODE_MIDI keeps the jack as MIDI out, and the rest only matter once a
+     * user selects a pulse mode.
+     *
+     * DEFAULT-fill, never zero-fill. A zeroed tail gives pulse_width = 0, i.e. a
+     * 0 ms pulse: a trigger mode that silently does nothing, which is exactly the
+     * class of bug that reads as "this build is broken". */
+    if (wire <= 1038) {
+        out->trs_mode    = TRS_MODE_DEFAULT;     /* MIDI — unchanged behaviour */
+        out->pulse_width = TRS_WIDTH_DEFAULT;    /* 100 = 10 ms, measured */
+        for (int L = 0; L < NUM_LAYERS; L++) {
+            out->trigger_note[L]    = TRIGGER_NOTE_DEFAULT;   /* 51 */
+            out->trigger_channel[L] = TRS_CHAN_DEFAULT;       /* 0 = omni */
+            out->sync_div[L]        = TRIGGER_DIV_DEFAULT;    /* 12 = 2 PPQN */
+        }
+        out->_rsvd_v10 = 0;
+    }
 }
 
 /* ---- profile_from_b64 ----
@@ -330,6 +362,20 @@ int profile_validate(const struct profile *p)
         for (int f = 0; f < NUM_FADERS; f++)
             if (p->fader_role[L][f] > 1) return -1;              /* 0=cc,1=chord_depth */
     if (p->chord_flags[0] > 127) return -1;                     /* chord velocity */
+
+    /* v10 jack settings. Every range comes from the jack's own codecs (trigger_out.h)
+     * rather than being restated here, so the per-profile field and the
+     * device-level record can never disagree about what a byte means. */
+    if (!trs_mode_valid(p->trs_mode))       return -1;          /* 0..2 */
+    if (!trs_width_valid(p->pulse_width))   return -1;          /* 1..255; 0 rejected ON PURPOSE */
+    for (int L = 0; L < NUM_LAYERS; L++) {
+        if (p->trigger_note[L] > 127)             return -1;
+        if (!trs_chan_valid(p->trigger_channel[L])) return -1;  /* 0 omni, 1..16 */
+        if (!trs_div_valid(p->sync_div[L]))         return -1;  /* 1..24 */
+    }
+    /* Reserved byte must be zero, so it stays claimable by a future field without
+     * a version bump and a stale writer cannot smuggle anything through it. */
+    if (p->_rsvd_v10 != 0) return -1;
     /* 0.22 Feature 1: chord_flags[1] REUSED as the PLAY shift target (was reserved).
      * 0 = default (resolves to layer 1); 1..NUM_LAYERS-1 select a layer. A value
      * past the last layer is malformed. chord_flags[2..3] stay reserved-pad. */
