@@ -233,13 +233,42 @@ void midi_out_rt(uint8_t status)
 #endif
 }
 
-/* MIDI-thru: forward `len` raw channel-voice bytes to the TRS jack ONLY (normal
- * tier), never USB or BLE, so a host->device stream cannot echo back to the host.
- * Called from the USB class OUT completion (usbd thread) when the global thru
- * switch is on. */
-void midi_out_thru(const uint8_t *bytes, uint8_t len)
+/* MIDI-thru: forward `len` raw channel-voice bytes to the destinations named in
+ * `dest` (MIDI_THRU_DEST_*). NEVER back out USB -- the stream came FROM the USB
+ * host and echoing it would loop.
+ *
+ * BLE IS NOT A LOOP, which is why it may be a destination at all. The comment
+ * that used to sit here said "TRS ONLY ... never USB or BLE", and its reasoning
+ * was sound for USB and over-broad for BLE: feldd has no BLE-MIDI *in* path, so
+ * there is nothing for a BLE send to echo into. The one real case is a host
+ * connected over BOTH transports at once receiving its own stream back over the
+ * air -- which is a reason for the two switches to be independent, not a reason
+ * to refuse the destination.
+ *
+ * Called from the USB class OUT completion (usbd thread). Both sinks are
+ * non-blocking: the TRS ring is drained by its ISR, and bt_link_send_midi()
+ * MUST queue and return rather than wait on the module UART. This runs on the
+ * usbd thread that also feeds the TRS ring and the clock; a send that blocks on
+ * uart_poll_out() (~870 us per message, one WICED HCI frame at 115200) would put BLE
+ * congestion straight into TRS timing and clock jitter. */
+void midi_out_thru(const uint8_t *bytes, uint8_t len, uint8_t dest)
 {
-    trs_enqueue_msg(bytes, len);   /* normal tier, atomic + all-or-nothing */
+    if (dest & MIDI_THRU_DEST_TRS) {
+        trs_enqueue_msg(bytes, len);   /* normal tier, atomic + all-or-nothing */
+    }
+#ifdef CONFIG_FELDD_BT_LINK
+    if (dest & MIDI_THRU_DEST_BLE) {
+        /* Rebuild the midi_msg the BLE encoder wants. usb_midi_extract_voice()
+         * already validated the length, and bt_link_core re-checks the status/data
+         * bits before framing, so a malformed message is refused rather than
+         * desynchronising the module's parser. No-op unless a host is subscribed. */
+        struct midi_msg m = { .status = bytes[0],
+                              .d1     = (len > 1) ? bytes[1] : 0,
+                              .d2     = (len > 2) ? bytes[2] : 0,
+                              .len    = len };
+        bt_link_send_midi(&m);
+    }
+#endif
 }
 
 /* USB-MIDI 1.0 sink: encode the channel-voice message as a 4-byte event and queue
@@ -264,7 +293,7 @@ static void midi1_send(const struct midi_msg *m) { (void)m; }
 
 int  midi_out_init(void) { return 0; }
 void midi_out_rt(uint8_t status) { (void)status; }
-void midi_out_thru(const uint8_t *bytes, uint8_t len) { (void)bytes; (void)len; }
+void midi_out_thru(const uint8_t *bytes, uint8_t len, uint8_t dest) { (void)bytes; (void)len; (void)dest; }
 void midi_out_trs_release_all(void) { }
 int  midi_out_trs_idle(void) { return 1; }
 

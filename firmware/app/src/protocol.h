@@ -15,6 +15,8 @@ struct proto_store {
     int     (*set_playrole)(uint8_t v);                /* 0 ok; nonzero NVS_FAIL */
     uint8_t (*get_midithru)(void);                     /* MIDI thru USB->TRS: 0 off, 1 on */
     int     (*set_midithru)(uint8_t v);                /* 0 ok; nonzero NVS_FAIL */
+    uint8_t (*get_blethru)(void);                      /* MIDI thru USB->BLE: 0 off, 1 on */
+    int     (*set_blethru)(uint8_t v);                 /* 0 ok; nonzero NVS_FAIL */
     uint8_t (*get_trsmode)(void);                      /* TRS jack role: 0 MIDI, 1 trigger, 2 sync */
     int     (*set_trsmode)(uint8_t v);                 /* 0 ok; nonzero NVS_FAIL */
     uint8_t (*get_trsdiv)(void);                       /* SYNC divider: clock ticks per pulse, 1..24 */

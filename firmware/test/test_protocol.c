@@ -76,6 +76,18 @@ static int mock_set_mode(uint8_t m)
     return 0;
 }
 static uint8_t g_playrole;
+static uint8_t g_blethru;
+static uint8_t g_midithru;
+static int     g_fail_blethru;
+static uint8_t mock_get_blethru(void){ return g_blethru; }
+static int mock_set_blethru(uint8_t v)
+{
+    if (g_fail_blethru) return g_fail_blethru;
+    if (v > 1) return -1;
+    g_blethru = v; return 0;
+}
+static uint8_t mock_get_midithru(void){ return g_midithru; }
+static int mock_set_midithru(uint8_t v){ if (v > 1) return -1; g_midithru = v; return 0; }
 static uint8_t mock_get_playrole(void){ return g_playrole; }
 static int mock_set_playrole(uint8_t v){ if (v > 1) return -1; g_playrole = v; return 0; }
 
@@ -138,6 +150,10 @@ static struct proto_store make_store(void)
     s.reset_all = mock_reset_all;
     s.get_mode = mock_get_mode;
     s.set_mode = mock_set_mode;
+    s.get_blethru = mock_get_blethru;
+    s.set_blethru = mock_set_blethru;
+    s.get_midithru = mock_get_midithru;
+    s.set_midithru = mock_set_midithru;
     s.get_playrole = mock_get_playrole;
     s.set_playrole = mock_set_playrole;
     s.get_trsmode = mock_get_trsmode;
@@ -975,10 +991,64 @@ static void t_trsmode_trsdiv_independent(void)
     assert(g_trsdiv == 6);    /* role back to MIDI, rate remembered */
 }
 
+/* The blethru verb: reads, sets, range-checks, and reports NVS failure -- the
+ * same four things playrole and midithru are held to.
+ *
+ * THE ONE THAT MATTERS is t_thru_switches_are_independent below. The entire
+ * reason blethru is a second NVS record rather than a widening of midithru is
+ * that a host connected over BOTH USB and BLE needs to silence exactly one
+ * destination. A change that coupled them would still pass every other
+ * assertion here. */
+static void t_blethru_verb(void)
+{
+    reset_store();
+    g_blethru = 0; g_fail_blethru = 0;
+    struct proto_store s = make_store();
+    char out[256];
+    proto_handle(&s, "{\"t\":\"blethru\",\"i\":1}", out, sizeof out, NULL);
+    assert(strstr(out, "\"t\":\"blethru_r\"") && strstr(out, "\"v\":0"));
+    proto_handle(&s, "{\"t\":\"blethru\",\"i\":2,\"v\":1}", out, sizeof out, NULL);
+    assert(strstr(out, "\"v\":1") && g_blethru == 1);
+    proto_handle(&s, "{\"t\":\"blethru\",\"i\":3,\"v\":2}", out, sizeof out, NULL);
+    assert(strstr(out, "BAD_VALUE"));   /* v>1 rejected */
+    assert(g_blethru == 1);             /* and the reject changed nothing */
+
+    g_fail_blethru = -5;
+    proto_handle(&s, "{\"t\":\"blethru\",\"i\":4,\"v\":0}", out, sizeof out, NULL);
+    assert(strstr(out, "NVS_FAIL"));
+    g_fail_blethru = 0;
+}
+
+static void t_thru_switches_are_independent(void)
+{
+    reset_store();
+    g_blethru = 0; g_midithru = 0; g_fail_blethru = 0;
+    struct proto_store s = make_store();
+    char out[256];
+
+    /* BLE on must not touch TRS. */
+    proto_handle(&s, "{\"t\":\"blethru\",\"i\":1,\"v\":1}", out, sizeof out, NULL);
+    assert(g_blethru == 1 && g_midithru == 0);
+
+    /* TRS on must not touch BLE. */
+    proto_handle(&s, "{\"t\":\"midithru\",\"i\":2,\"v\":1}", out, sizeof out, NULL);
+    assert(g_midithru == 1 && g_blethru == 1);
+
+    /* And turning one off leaves the other alone -- the case the feature exists
+     * for: one machine on both transports, silencing only the wireless copy. */
+    proto_handle(&s, "{\"t\":\"blethru\",\"i\":3,\"v\":0}", out, sizeof out, NULL);
+    assert(g_blethru == 0 && g_midithru == 1);
+
+    proto_handle(&s, "{\"t\":\"midithru\",\"i\":4,\"v\":0}", out, sizeof out, NULL);
+    assert(g_midithru == 0 && g_blethru == 0);
+}
+
 int main(void)
 {
     t_hello();
     t_playrole_verb();
+    t_blethru_verb();
+    t_thru_switches_are_independent();
     t_read();
     t_write();
     t_write_bad_len();

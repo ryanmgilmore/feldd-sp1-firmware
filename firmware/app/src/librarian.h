@@ -35,6 +35,8 @@ uint8_t librarian_brightness(void);        /* Feature B: 0 dim, 1 full */
 int     librarian_set_brightness(uint8_t v);
 uint8_t librarian_midi_thru(void);         /* MIDI thru USB->TRS: 0 off (default), 1 on; own record LIB_ID_MIDI_THRU */
 int     librarian_set_midi_thru(uint8_t v);
+uint8_t librarian_ble_thru(void);          /* MIDI thru USB->BLE: 0 off (default), 1 on; own record LIB_ID_BLE_THRU */
+int     librarian_set_ble_thru(uint8_t v);
 uint8_t librarian_trs_mode(void);          /* TRS jack role: 0 MIDI (default), 1 trigger, 2 sync; own record */
 int     librarian_set_trs_mode(uint8_t v);
 uint8_t librarian_trs_chan(void);          /* trigger match channel; 0 = omni (default), 1..16 = channel */

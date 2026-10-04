@@ -2,7 +2,7 @@ SRC=../app/src
 CFLAGS=-Wall -Wextra -I$(SRC)
 # NOTE: the Bluetooth radio subsystem (bt_*, wiced_*, cybt_blobs) is not in this
 # open repo (see the root README "What's not here"), so its host tests are omitted too.
-TESTS=test_control_logic test_mapping test_profile test_protocol test_buttons test_config_cdc test_gesture test_midi1_codec test_transport test_mode test_lib_header test_lib_bank test_dial test_led_dial test_side_led test_layer_bank test_kbd_hid test_chord_engine test_chord6 test_led_override test_nvs_erase test_btn_toggle test_cc_value test_panic test_clockgen test_clock_ctl test_clock_cfg test_usb_rt_parse test_midi_rt_ring test_trigger_match test_profile_migrate test_held_notes
+TESTS=test_control_logic test_mapping test_profile test_protocol test_buttons test_config_cdc test_gesture test_midi1_codec test_transport test_mode test_lib_header test_lib_bank test_dial test_led_dial test_side_led test_layer_bank test_kbd_hid test_chord_engine test_chord6 test_led_override test_nvs_erase test_btn_toggle test_cc_value test_panic test_clockgen test_clock_ctl test_clock_cfg test_usb_rt_parse test_midi_rt_ring test_trigger_match test_profile_migrate test_held_notes test_midi_thru_dest
 test: $(TESTS)
 	@for t in $(TESTS); do echo "== $$t =="; ./$$t || exit 1; done
 test_control_logic: test_control_logic.c $(SRC)/control_logic.c $(SRC)/control_logic.h
@@ -36,6 +36,8 @@ test_lib_bank: test_lib_bank.c $(SRC)/lib_bank.h $(SRC)/profile.h
 	$(CC) $(CFLAGS) -o $@ test_lib_bank.c
 test_held_notes: test_held_notes.c $(SRC)/held_notes.h
 	$(CC) $(CFLAGS) -o $@ test_held_notes.c
+test_midi_thru_dest: test_midi_thru_dest.c $(SRC)/midi_thru_dest.h
+	$(CC) $(CFLAGS) -o $@ test_midi_thru_dest.c
 test_profile_migrate: test_profile_migrate.c $(SRC)/profile_migrate.h $(SRC)/profile.h
 	$(CC) $(CFLAGS) -o $@ test_profile_migrate.c
 test_midi1_codec: test_midi1_codec.c $(SRC)/midi1_codec.c $(SRC)/midi1_codec.h

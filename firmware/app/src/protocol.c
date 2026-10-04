@@ -322,6 +322,30 @@ int proto_handle(const struct proto_store *s, const char *line,
             id, (unsigned)s->get_midithru());
     }
 
+    /* ---- blethru ---- */
+    /* {"t":"blethru"} reads; {"t":"blethru","v":0|1} sets the USB->BLE MIDI-thru
+     * switch. INDEPENDENT of midithru: the TRS jack and a wireless host are
+     * different destinations, and a machine connected over both USB and BLE wants
+     * to turn exactly one of them off. Both default 0.
+     *
+     * Unconditional, NOT #ifdef CONFIG_FELDD_BT_LINK. The setting is one stored
+     * byte and costs nothing in a BT-less build, whereas compiling the verb out
+     * would make the CDC wire protocol differ between two builds of the same
+     * source -- which breaks host tooling in a way that is very hard to see. A
+     * BT-less image stores the preference and nothing reads it. */
+    if (strcmp(verb, "blethru") == 0) {
+        uint32_t v;
+        if (json_uint(line, "v", &v) == 0) {
+            if (v > 1)
+                return emit_err(out, outcap, id, "BAD_VALUE", "blethru must be 0 or 1");
+            if (s->set_blethru((uint8_t)v) != 0)
+                return emit_err(out, outcap, id, "NVS_FAIL", "nvs set_blethru failed");
+        }
+        return emit(out, outcap,
+            "{\"t\":\"blethru_r\",\"i\":%u,\"ok\":true,\"v\":%u}",
+            id, (unsigned)s->get_blethru());
+    }
+
     /* ---- trsmode ---- */
     /* {"t":"trsmode"} reads; {"t":"trsmode","v":0|1|2} sets what the 3.5 mm TRS
      * jack does: 0 MIDI out (default, unchanged behaviour), 1 analog trigger on a

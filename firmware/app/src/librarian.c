@@ -120,6 +120,17 @@ BUILD_ASSERT(DIV_ROUND_UP(NUM_PROFILES, SP1_NVS_ENTRIES_PER_SECTOR)
 #define LIB_ID_HEADER        1u
 #define LIB_ID_SETTINGS      2u   /* future-bookkeeping band 2..0xFF; holds play_mode */
 #define LIB_ID_MIDI_THRU     3u   /* own 1-byte record: MIDI thru USB->TRS, 0 off / 1 on */
+#define LIB_ID_BLE_THRU     10u   /* own 1-byte record: MIDI thru USB->BLE, 0 off / 1 on.
+                                   * Id 10, not 4: ids 4..7 hold the jack's retired
+                                   * device-level records, which the v9->v10 migration
+                                   * still reads, so this sits above them and below
+                                   * LIB_ID_PROFILE_BASE.
+                                   * A NEW id in the bookkeeping band, never a field added
+                                   * to a struct: no existing record changes size, so the
+                                   * profile store version does NOT move and a v10 store
+                                   * needs no migration. Older firmware ignores this id;
+                                   * newer firmware defaults it when the read returns
+                                   * -ENOENT, which is what every device has today. */
 #define LIB_ID_TRS_MODE      4u   /* own 1-byte record: TRS jack role, 0 MIDI / 1 trigger / 2 sync */
 #define LIB_ID_TRS_DIV       5u   /* own 1-byte record: SYNC divider, clock ticks per pulse */
 #define LIB_ID_TRS_WIDTH     6u   /* own 1-byte record: pulse width in 100 us units */
@@ -141,7 +152,8 @@ static volatile uint8_t trs_mode_cache;   /* TRS jack role; own record LIB_ID_TR
 static volatile uint8_t trs_chan_cache;   /* trigger match channel; own record */
 static volatile uint8_t trs_width_cache;  /* pulse width, 100 us units; own record */
 static volatile uint8_t trs_div_cache;    /* SYNC divider;  own record LIB_ID_TRS_DIV  */
-static volatile uint8_t midi_thru_cache;  /* MIDI thru USB->TRS: 0 off (default)/1 on; own record LIB_ID_MIDI_THRU. volatile: usbd-thread reader (usb_midi1 OUT cb) + config-thread writer, like clock_on */
+static volatile uint8_t midi_thru_cache;
+static volatile uint8_t ble_thru_cache;   /* MIDI thru USB->BLE: 0 off (default)/1 on; own record LIB_ID_BLE_THRU. volatile for the same reason as midi_thru_cache: usbd-thread reader, config-thread writer */  /* MIDI thru USB->TRS: 0 off (default)/1 on; own record LIB_ID_MIDI_THRU. volatile: usbd-thread reader (usb_midi1 OUT cb) + config-thread writer, like clock_on */
 #ifdef CONFIG_FELDD_BT_PROVISION
 static uint8_t        provision_done_cache; /* Q5: radio provisioned flag; LIB_ID_SETTINGS[3] (bookkeeping only) */
 static uint8_t        provision_app_maj;    /* Q5: flashed app major;       LIB_ID_SETTINGS[4] */
@@ -819,6 +831,12 @@ int librarian_init(void)
     ssize_t rmt = nvs_read(&fs, LIB_ID_MIDI_THRU, &mt, sizeof(mt));
     midi_thru_cache = lib_midithru_load(rmt == (ssize_t)sizeof(mt), mt);
 
+    /* BLE thru (USB-in -> BLE-out): the same discipline, its own record, default
+     * OFF. Absent on every device that exists today, which loads as 0. */
+    uint8_t bt = 0;
+    ssize_t rbt = nvs_read(&fs, LIB_ID_BLE_THRU, &bt, sizeof(bt));
+    ble_thru_cache = lib_blethru_load(rbt == (ssize_t)sizeof(bt), bt);
+
     /* TRS jack role + SYNC divider: same discipline as MIDI thru — each in its
      * OWN 1-byte record, absent or out-of-range decoding to the default, so a
      * device that never touched them is neither short-read nor reseeded. */
@@ -1176,6 +1194,32 @@ int librarian_set_midi_thru(uint8_t v)
     midi_thru_cache = v;
     ssize_t w = nvs_write(&fs, LIB_ID_MIDI_THRU, &midi_thru_cache, sizeof(midi_thru_cache));
     return (w == (ssize_t)sizeof(midi_thru_cache)) ? 0 : -1;
+}
+
+uint8_t librarian_ble_thru(void)
+{
+    return ble_thru_cache;   /* RAM copy */
+}
+
+int librarian_set_ble_thru(uint8_t v)
+{
+    /* Mirrors librarian_set_midi_thru exactly: own record, range-checked, and a
+     * same-value set does not burn an NVS write. Kept as a separate function
+     * rather than a shared helper taking an id -- the two switches are allowed to
+     * diverge (different defaults, one day different validation), and a shared
+     * helper would make that a refactor instead of an edit. */
+    if (!fs_ready) {
+        return -EINVAL;
+    }
+    if (!lib_blethru_valid(v)) {
+        return -EINVAL;
+    }
+    if (v == ble_thru_cache) {
+        return 0;             /* no-op: don't burn an NVS write */
+    }
+    ble_thru_cache = v;
+    ssize_t w = nvs_write(&fs, LIB_ID_BLE_THRU, &ble_thru_cache, sizeof(ble_thru_cache));
+    return (w == (ssize_t)sizeof(ble_thru_cache)) ? 0 : -1;
 }
 
 uint8_t librarian_bpm(void)
