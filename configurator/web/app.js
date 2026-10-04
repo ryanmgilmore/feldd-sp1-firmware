@@ -602,10 +602,19 @@ function renderJack() {
     body.append(h('div', { class: 'fields', style: 'margin-top:10px' },
       fields.flatMap((f) => [h('label', {}, names[f]), cell(f, 0)])));
   } else {
-    const grid = h('div', { class: 'jack-grid' }, h('span'), ...Array.from({ length: NUM_LAYERS }, (_, L) => h('span', { class: 'hd' }, `L${L + 1}`)));
-    for (const f of fields) {
-      grid.append(h('span', { class: 'rowlabel' }, names[f]));
-      for (let L = 0; L < NUM_LAYERS; L++) grid.append(cell(f, L));
+    // Wide panel: L1..L8 across in one block. Narrow panel: the same layout folded
+    // into two blocks of four (L1-L4, then L5-L8) -- eight columns beside the row
+    // labels cannot fit below ~600 px (bench, 2026-10-03), and a sideways scroll hid
+    // L7-L8. Two rows of four was Ryan's call.
+    const across = ($('jack-panel').clientWidth || 9999) >= 600;
+    const blocks = across ? [[0, 8]] : [[0, 4], [4, 8]];
+    const grid = h('div', { class: `jack-grid${across ? '' : ' half'}` });
+    for (const [from, to] of blocks) {
+      grid.append(h('span'), ...Array.from({ length: to - from }, (_, k) => h('span', { class: 'hd' }, `L${from + k + 1}`)));
+      for (const f of fields) {
+        grid.append(h('span', { class: 'rowlabel' }, names[f]));
+        for (let L = from; L < to; L++) grid.append(cell(f, L));
+      }
     }
     body.append(grid);
   }
@@ -914,6 +923,11 @@ function wire() {
     if (S.banks.some((bank) => bank.some(isDirty))) { e.preventDefault(); e.returnValue = ''; }
   });
   if (/Mobi|Android|iPhone|iPod/i.test(navigator.userAgent)) showBanner('This configurator needs a computer: the SP-1 connects over USB with WebSerial.');
+  let lastAcross = null;
+  window.addEventListener('resize', () => {
+    const across = $('jack-panel').clientWidth >= 600;
+    if (across !== lastAcross) { lastAcross = across; renderJack(); }
+  });
   if (new URLSearchParams(location.search).get('demo') === '1') connect(true);
 }
 

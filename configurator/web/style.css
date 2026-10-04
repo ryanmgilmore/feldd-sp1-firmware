@@ -131,10 +131,17 @@ label.inline { display: inline-flex; gap: 6px; align-items: center; font: 12px v
 .basic-nav { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 
 /* jack panel */
-.jack-grid { display: grid; grid-template-columns: auto repeat(8, minmax(58px, 1fr)); gap: 4px 6px; align-items: center; font-size: 12px; margin-top: 10px; overflow-x: auto; }
+.jack-grid { display: grid; grid-template-columns: auto repeat(8, minmax(46px, 1fr)); gap: 4px 6px; align-items: center; font-size: 12px; margin-top: 10px; overflow-x: auto; }
 .jack-grid .hd { font: 11px var(--font-mono); color: var(--muted); text-align: center; }
 .jack-grid .rowlabel { font: 12px var(--font-mono); color: var(--muted); }
 .jack-grid input, .jack-grid select { width: 100%; min-width: 0; padding: 4px 2px; font-size: 12px; }
+.jack-grid.half { grid-template-columns: auto repeat(4, minmax(56px, 1fr)); }
+.jack-grid.half .hd { padding-top: 6px; }
+/* Eight dropdowns side by side: Chrome's own arrow eats ~20 px of each, which cut
+   "omni" to "om" and "1/16" to "1/1(" on the bench. A slim drawn caret instead. */
+.jack-grid select { appearance: none; -webkit-appearance: none; padding: 4px 12px 4px 5px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 8px) 55%, calc(100% - 5px) 55%; background-size: 3px 3px, 3px 3px; background-repeat: no-repeat; }
 .jack-diag { margin-top: 10px; font: 12px var(--font-mono); color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
 /* log */
