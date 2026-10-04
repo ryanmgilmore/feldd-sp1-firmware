@@ -812,7 +812,8 @@ function renderLive() {
   if (p) for (const id of CONTROL_IDS) { const t = labelOf(p, S.layer, id); if (t) labels[id] = t; }
   device.update({
     monitor: S.monitor, selected: S.selected, labels,
-    modeLeds: S.mode === 1 ? [false, true, true, false] : [true, false, false, true],
+    // No modeLeds: feldd.com drew a fixed MIDI/Keyboard pattern there, not device
+    // state, which reads as a status light that is not one (Ryan, bench 2026-10-03).
     pressed: Object.entries(S.monitor).filter(([k, v]) => k[0] === 'b' && v === 1).map(([k]) => k),
   });
   $('monitor-layer').textContent = `layer ${S.layer + 1}`;
