@@ -24,7 +24,8 @@ merged here so they can be used now:
 1. If your SP-1 has never run feldd's own release build, flash that first and use
    feldd.com's configurator to **enable Bluetooth** — only feldd's build can
    provision the radio.
-2. Flash this fork's `.bin` from Releases, the same way.
+2. Flash this fork's `.bin` from Releases, the same way. Power on with a
+   **1.5 s hold on ••, then release** — a tap no longer turns it on.
 3. Configure it **only with this fork's configurator.** feldd.com's configurator
    does not understand profile v10: it reads these profiles wrongly, and saving
    from it would overwrite them.
