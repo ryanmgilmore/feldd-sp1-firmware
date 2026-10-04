@@ -1,6 +1,6 @@
 <!-- DRAFT — Ryan to reword. This block is the fork's landing section; everything below it is upstream feldd's README, unchanged. -->
 
-# feldd, with per-profile TRS output and Bluetooth MIDI thru
+# feldd, with per-profile TRS sync jack modes and Bluetooth MIDI thru
 
 This is a fork of [feldd](https://github.com/bnjreece/feldd-sp1-firmware) by
 Benjamin Reece. It carries changes offered upstream as separate pull requests,
@@ -8,9 +8,9 @@ merged here so they can be used now:
 
 | Change | Upstream PR |
 |---|---|
-| Selectable TRS jack: MIDI out, analog trigger, or analog sync | #4 |
+| Selectable TRS sync jack modes: MIDI out, analog trigger, or analog sync | #4 |
 | Profile migration: a format bump keeps your profiles | [link] |
-| TRS jack settings per profile (profile v10) | [link] |
+| TRS sync jack modes per profile (profile v10) | [link] |
 | MIDI thru USB → Bluetooth, on its own switch | [link] |
 | A bump on •• no longer powers the SP-1 on (1.5 s hold) | [link] |
 | Public tree builds without the Bluetooth sources | #2 |

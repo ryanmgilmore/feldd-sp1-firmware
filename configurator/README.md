@@ -7,7 +7,7 @@ profile slots in each mode, every mapping, eight layers, keyboard mode, MIDI
 clock, starter profiles, and a live monitor — plus the two things this fork
 adds:
 
-- **the TRS jack's role per profile** — MIDI out, analog trigger, or analog
+- **the TRS sync jack's role per profile** — MIDI out, analog trigger, or analog
   sync, with per-layer trigger note, channel and sync division
 - **MIDI thru from USB to Bluetooth**, on its own switch beside USB → TRS thru
 
@@ -20,7 +20,7 @@ Edge, Arc); `?demo=1` runs it against a simulated SP-1.
 
 The SP-1 drawing, the profile codec, the serial transport and the starter
 profiles are ported from feldd.com's configurator by Benjamin Reece
-(https://feldd.com/sp-1/configure). The page itself, the v10 jack support and
+(https://feldd.com/sp-1/configure). The page itself, the v10 TRS sync jack support and
 the Bluetooth thru switch are new.
 
 ## Running it locally

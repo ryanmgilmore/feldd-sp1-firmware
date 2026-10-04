@@ -208,7 +208,7 @@ async function connect(useDemo) {
     try { S.blethru = await dev.getBleThru(); } catch { S.blethru = null; }
     await refreshJackLive();
     if (S.pver != null && S.pver < 9) showBanner(`This SP-1 runs an older feldd (profile v${S.pver}). Editing needs profile v9 or newer — export your profiles, then update the firmware.`);
-    else if (S.pver === 9) showBanner('This SP-1 runs profile v9 firmware: everything works except the per-profile TRS jack, which needs the v10 build.');
+    else if (S.pver === 9) showBanner('This SP-1 runs profile v9 firmware: everything works except the per-profile TRS sync jack modes, which need the v10 build.');
     else hideBanner();
   } catch (e) {
     showError(e);
@@ -241,7 +241,7 @@ async function saveSlot(mode, slot) {
   if (!S.dev || !e.working) return;
   const p = e.working;
   if (encodeVersion() === 9 && !isDefaultJack(p)) {
-    throw new Error('This device runs v9 firmware, which has no per-profile jack — the TRS jack settings in this profile will not be saved.');
+    throw new Error('This device runs v9 firmware, which has no per-profile TRS sync jack modes — the sync jack settings in this profile will not be saved.');
   }
   await S.dev.request('write', { n: mode * SLOTS + slot, data: encodeB64(p) });
   e.saved = clone(p);
@@ -354,7 +354,7 @@ function onExportAll() {
     if (e.working) profiles.push({ mode: m ? 'keyboard' : 'midi', slot, profile: forFile(normalize(e.working)) });
   }));
   const v10 = profiles.filter((x) => x.profile.version === 10).length;
-  if (v10) showBanner(`${v10} profile(s) in this backup use the TRS jack (profile v10): only this configurator can import those; the rest also import at feldd.com.`);
+  if (v10) showBanner(`${v10} profile(s) in this backup use the TRS sync jack (profile v10): only this configurator can import those; the rest also import at feldd.com.`);
   download('feldd-all-profiles.feldd', { format: 'sp1-bundle', version: 1, profiles });
 }
 async function onImportFile(file) {
@@ -523,7 +523,7 @@ function renderDeviceSettings() {
   seg('thru-trs', S.midithru);
   $('row-blethru').hidden = S.blethru == null;
   seg('thru-ble', S.blethru);
-  const jackNote = hasJackCap() && S.midithru === 1 && jackOf(prof() || {}).mode !== 0 ? ' · thru is inert while this profile\'s jack is not MIDI' : '';
+  const jackNote = hasJackCap() && S.midithru === 1 && jackOf(prof() || {}).mode !== 0 ? ' · thru is inert while this profile\'s TRS sync jack is not MIDI' : '';
   $('fw-line').textContent = `feldd ${S.hello?.fw ?? '?'} · profile v${S.pver ?? '?'}${jackNote}`;
 }
 
@@ -578,7 +578,7 @@ function renderJack() {
   const modes = h('div', { class: 'seg' }, JACK_MODES.map(([v, label]) =>
     h('button', { 'aria-selected': String(j.mode === v), onclick: () => put((jj) => { jj.mode = v; }) }, label)));
   body.append(h('div', { class: 'row wrap' }, modes,
-    j.mode === 0 ? h('span', { class: 'muted small' }, 'the jack is ordinary MIDI out (Type A)') : null));
+    j.mode === 0 ? h('span', { class: 'muted small' }, 'the TRS sync jack is ordinary MIDI out (Type A)') : null));
   if (j.mode === 0) { renderJackDiag(body); return; }
 
   body.append(h('div', { class: 'row wrap' },
@@ -652,7 +652,7 @@ function renderClock() {
   panel.hidden = false;
   const c = { enable: false, tapButton: 4, bpmFader: 3, defaultBpm: 120, ...(p.clock || {}) };
   const put = (fn) => edit((q) => { const cc = { enable: false, tapButton: 4, bpmFader: 3, defaultBpm: 120, ...(q.clock || {}) }; fn(cc); q.clock = cc; });
-  panel.append(h('h2', {}, 'MIDI clock', h('span', { class: 'hint', title: 'when on, streams MIDI clock out the TRS jack (and passes an incoming USB clock through). the tap button and BPM fader are borrowed from their normal jobs while the clock is on. per-profile: switching to a profile with the clock off stops it.' }, '?')));
+  panel.append(h('h2', {}, 'MIDI clock', h('span', { class: 'hint', title: 'when on, streams MIDI clock out the TRS sync jack (and passes an incoming USB clock through). the tap button and BPM fader are borrowed from their normal jobs while the clock is on. per-profile: switching to a profile with the clock off stops it.' }, '?')));
   const taps = [[1, 'Track 1'], [2, 'Track 2'], [3, 'Track 3'], [4, 'Track 4'], [5, 'Vol +'], [6, 'Vol −'], [7, 'FWD'], [8, 'RWD'], [15, 'none']];
   panel.append(h('div', { class: 'row wrap' },
     h('div', { class: 'seg small' }, [[false, 'off'], [true, 'on']].map(([v, l]) =>
