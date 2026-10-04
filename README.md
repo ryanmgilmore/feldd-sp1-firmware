@@ -1,5 +1,3 @@
-<!-- DRAFT — Ryan to reword. This block is the fork's landing section; everything below it is upstream feldd's README, unchanged. -->
-
 # feldd, with per-profile TRS sync jack modes and Bluetooth MIDI thru
 
 This is a fork of [feldd](https://github.com/bnjreece/feldd-sp1-firmware) by
@@ -8,12 +6,12 @@ merged here so they can be used now:
 
 | Change | Upstream PR |
 |---|---|
-| Selectable TRS sync jack modes: MIDI out, analog trigger, or analog sync | #4 |
-| Profile migration: a format bump keeps your profiles | [link] |
-| TRS sync jack modes per profile (profile v10) | [link] |
-| MIDI thru USB → Bluetooth, on its own switch | [link] |
-| A bump on •• no longer powers the SP-1 on (1.5 s hold) | [link] |
-| Public tree builds without the Bluetooth sources | #2 |
+| Selectable TRS sync jack modes: MIDI out, analog trigger, or analog sync | [#4](https://github.com/bnjreece/feldd-sp1-firmware/pull/4) |
+| Profile migration: a format bump keeps your profiles | [#5](https://github.com/bnjreece/feldd-sp1-firmware/pull/5) |
+| TRS sync jack modes per profile (profile v10) | [#6](https://github.com/bnjreece/feldd-sp1-firmware/pull/6) |
+| MIDI thru USB → Bluetooth, on its own switch | [#7](https://github.com/bnjreece/feldd-sp1-firmware/pull/7) |
+| A bump on •• no longer powers the SP-1 on (1.5 s hold) | [#8](https://github.com/bnjreece/feldd-sp1-firmware/pull/8) |
+| Public tree builds without the Bluetooth sources | [#2](https://github.com/bnjreece/feldd-sp1-firmware/pull/2) |
 
 **Download:** [Releases](../../releases) — the `.bin` includes Bluetooth MIDI.
 **Configure:** [the configurator](https://ryanmgilmore.github.io/feldd-sp1-firmware/)
@@ -36,7 +34,7 @@ Your existing profiles are migrated on first boot, not erased.
 
 Built exactly as upstream (below). The source here builds **without** Bluetooth,
 like upstream's public tree; the released `.bin` adds a Bluetooth driver that is
-not published. [Ryan: wording.]
+not published.
 
 ---
 
