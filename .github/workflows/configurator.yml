@@ -1,11 +1,11 @@
 # Test the configurator against this tree's firmware goldens, and publish it to
-# GitHub Pages from the release branch. Pages must be set to "GitHub Actions" in
+# GitHub Pages from main. Pages must be set to "GitHub Actions" in
 # the repository settings.
 name: configurator
 
 on:
   push:
-    branches: [release]
+    branches: [main]
     paths: ['configurator/**', 'firmware/test/test_profile.c', '.github/workflows/configurator.yml']
   pull_request:
     paths: ['configurator/**', 'firmware/test/test_profile.c']
@@ -26,7 +26,7 @@ jobs:
 
   pages:
     needs: test
-    if: github.ref == 'refs/heads/release'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions: { pages: write, id-token: write }
     environment: { name: github-pages, url: '${{ steps.deploy.outputs.page_url }}' }
