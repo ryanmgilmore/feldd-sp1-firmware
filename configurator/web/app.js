@@ -332,16 +332,27 @@ function download(name, obj) {
   a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+// A profile whose jack is untouched loses nothing as v9, so it is written as v9
+// with no jack block: feldd.com's importer rejects any version above 9, and a
+// backup that only this page can read would strand anyone going back to
+// upstream feldd. Only a profile that really uses the jack is written as v10.
+function forFile(p) {
+  const o = clone(p);
+  if (isDefaultJack(o)) { delete o.jack; o.version = 9; } else { o.jack = jackOf(o); o.version = 10; }
+  return o;
+}
 function onExport() {
   const p = prof(); if (!p) return;
   normalize(p); // validates; throws on a bad profile
-  download(`${slug(p.name)}.feldd`, { ...clone(p), format: 'sp1-profile' });
+  download(`${slug(p.name)}.feldd`, { ...forFile(p), format: 'sp1-profile' });
 }
 function onExportAll() {
   const profiles = [];
   S.banks.forEach((bank, m) => bank.forEach((e, slot) => {
-    if (e.working) profiles.push({ mode: m ? 'keyboard' : 'midi', slot, profile: normalize(e.working) });
+    if (e.working) profiles.push({ mode: m ? 'keyboard' : 'midi', slot, profile: forFile(normalize(e.working)) });
   }));
+  const v10 = profiles.filter((x) => x.profile.version === 10).length;
+  if (v10) showBanner(`${v10} profile(s) in this backup use the TRS jack (profile v10): only this configurator can import those; the rest also import at feldd.com.`);
   download('feldd-all-profiles.feldd', { format: 'sp1-bundle', version: 1, profiles });
 }
 async function onImportFile(file) {

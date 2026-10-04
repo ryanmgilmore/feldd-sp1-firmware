@@ -33,5 +33,9 @@ await page.click('#btn-export-all');
 await new Promise((r) => setTimeout(r, 800));
 const b = JSON.parse(fs.readFileSync(DL + 'feldd-all-profiles.feldd', 'utf8'));
 console.log('bundle', b.format, b.version, b.profiles.length, 'first jack', JSON.stringify(b.profiles[0].profile.jack?.mode));
+// Untouched-jack profiles must be v9 with no jack (feldd.com rejects version > 9);
+// only jack-using ones may be v10.
+const wrong = b.profiles.filter((e) => (e.profile.jack ? e.profile.version !== 10 || e.profile.jack.mode === 0 : e.profile.version !== 9));
+console.log('portable export:', wrong.length ? `FAIL ${wrong.map((e) => e.mode + ':' + e.slot).join(' ')}` : `PASS (${b.profiles.filter((e) => e.profile.version === 9).length} v9, ${b.profiles.filter((e) => e.profile.version === 10).length} v10)`);
 console.log('ERRORS', errors.length ? errors : 'none');
 await browser.close();
