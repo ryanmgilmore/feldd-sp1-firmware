@@ -33,7 +33,7 @@ ES modules need http(s), not `file://`; WebSerial needs a secure context, and
 ## Tests
 
 ```sh
-cd configurator && node --test test/
+cd configurator && node --test test/*.test.mjs
 ```
 
 The golden profile strings are read from `../firmware/test/test_profile.c` at
