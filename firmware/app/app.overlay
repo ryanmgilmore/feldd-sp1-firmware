@@ -199,3 +199,29 @@ zephyr_udc0: &usbd {
         };
     };
 };
+
+/* sp1dev FLASH-MAP.md (2026-10-04): the shared SP-1 flash map, mirrored from
+ * sp1dev's flash-map/sp1-flash-map.overlay (tools/flash-map-check.py compares).
+ * Every firmware declares every store and writes only its own: feldd writes
+ * storage_partition (above) and feldd_labels; DXP1 owns dexed_storage. The app
+ * cap is lowered so the stores fit; a TE DFU update erases only what it writes. */
+&app_partition {
+    reg = <0x00020000 0x000AE000>;            /* 0x20000-0xCDFFF */
+};
+
+&flash0 {
+    partitions {
+        dexed_storage: partition@ce000 {      /* DXP1's banks; never written by feldd */
+            label = "engine-dxp1";
+            reg = <0x000CE000 0x00018000>;
+        };
+        feldd_labels: partition@e7000 {       /* labels beside the profiles */
+            label = "feldd-labels";
+            reg = <0x000E7000 0x00010000>;
+        };
+        te_reserved: partition@ff000 {        /* TE's reserved page; never written */
+            label = "te-reserved";
+            reg = <0x000FF000 0x00001000>;
+        };
+    };
+};

@@ -15,6 +15,7 @@
 #include <stdarg.h>
 #include "protocol.h"
 #include "led_override.h"
+#include "label_rec.h"
 
 /* The caps array advertised in hello_r. Hardcoded for this task per spec.
  * "trsout" says the TRS jack's ROLE is selectable (trsmode/trsdiv verbs), as
@@ -22,6 +23,9 @@
  * that does not know the string ignores it, so advertising it is safe for
  * existing clients and is how a future one discovers the feature. */
 #define CAPS_JSON "[\"trs\",\"trsout\",\"usbmidi\",\"shift\",\"led\",\"mon\"]"
+/* With a label store wired (proto_store.label_get), "labels" is advertised:
+ * the configurator then reads and writes labels on the device. */
+#define CAPS_JSON_LABELS "[\"trs\",\"trsout\",\"usbmidi\",\"shift\",\"led\",\"mon\",\"labels\"]"
 
 /* ------------------------------------------------------------------ */
 /* Minimal flat-JSON field extractor.                                  */
@@ -170,10 +174,11 @@ int proto_handle(const struct proto_store *s, const char *line,
         return emit(out, outcap,
             "{\"t\":\"hello_r\",\"i\":%u,\"ok\":true,\"proto\":%d,\"pver\":%d,"
             "\"fw\":\"%s\",\"profiles\":%u,\"active\":%u,\"faders\":%u,\"buttons\":%u,"
-            "\"caps\":" CAPS_JSON ",\"pbytes\":%d,\"uid\":\"%s\"}",
+            "\"caps\":%s,\"pbytes\":%d,\"uid\":\"%s\"}",
             id, PROTO_VERSION, PROFILE_VERSION, s->fw,
             (unsigned)s->profiles, (unsigned)s->get_active(),
             (unsigned)s->faders, (unsigned)s->buttons,
+            s->label_get ? CAPS_JSON_LABELS : CAPS_JSON,
             (int)sizeof(struct profile),
             s->uid ? s->uid : "");
     }
@@ -232,6 +237,49 @@ int proto_handle(const struct proto_store *s, const char *line,
         return emit(out, outcap,
             "{\"t\":\"setactive_r\",\"i\":%u,\"ok\":true,\"active\":%u}",
             id, (unsigned)n);
+    }
+
+    /* ---- labels (sp1dev labels/SPEC.md §2) ---- */
+    if (strcmp(verb, "labelmap") == 0) {
+        if (!s->label_map)
+            return emit_err(out, outcap, id, "UNSUPPORTED", "no label store");
+        uint8_t m[16];
+        if (s->label_map(m) != 0)
+            return emit_err(out, outcap, id, "NVS_FAIL", "label store unavailable");
+        return emit(out, outcap,
+            "{\"t\":\"labelmap_r\",\"i\":%u,\"ok\":true,\"m\":"
+            "[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u]}",
+            id, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
+            m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+    }
+    if (strcmp(verb, "getlabels") == 0 || strcmp(verb, "setlabels") == 0) {
+        const int set = verb[0] == 's';
+        if (set ? s->label_set == 0 : s->label_get == 0)
+            return emit_err(out, outcap, id, "UNSUPPORTED", "no label store");
+        uint32_t n, l;
+        if (json_uint(line, "n", &n) < 0 || n >= s->profiles ||
+            json_uint(line, "l", &l) < 0 || l >= 8)
+            return emit_err(out, outcap, id, "BAD_INDEX", "bad index");
+        uint8_t rec[LABEL_REC_MAX];
+        char b64[LABEL_B64_MAX + 1];
+        if (!set) {
+            int len = s->label_get((uint8_t)n, (uint8_t)l, rec, (int)sizeof rec);
+            if (len < 0 || label_b64_encode(rec, len, b64, (int)sizeof b64) < 0)
+                return emit_err(out, outcap, id, "NVS_FAIL", "label read failed");
+            return emit(out, outcap,
+                "{\"t\":\"getlabels_r\",\"i\":%u,\"ok\":true,\"n\":%u,\"l\":%u,\"data\":\"%s\"}",
+                id, (unsigned)n, (unsigned)l, b64);
+        }
+        if (json_str(line, "data", b64, (int)sizeof b64) < 0)
+            return emit_err(out, outcap, id, "BAD_LABELS", "missing or oversize data");
+        int len = label_b64_decode(b64, rec, (int)sizeof rec);
+        if (len < 0 || (len > 0 && !label_rec_valid(rec, len)))
+            return emit_err(out, outcap, id, "BAD_LABELS", "malformed labels");
+        if (s->label_set((uint8_t)n, (uint8_t)l, rec, len) != 0)
+            return emit_err(out, outcap, id, "NVS_FAIL", "label write failed");
+        return emit(out, outcap,
+            "{\"t\":\"setlabels_r\",\"i\":%u,\"ok\":true,\"n\":%u,\"l\":%u}",
+            id, (unsigned)n, (unsigned)l);
     }
 
     /* ---- getactive ---- */
