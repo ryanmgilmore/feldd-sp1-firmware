@@ -550,6 +550,26 @@ static void chord_flush_all(void)
     k_sched_unlock();
 }
 
+/* Channels the ACTIVE profile can send CC64 on (profile_sustain_channels),
+ * refreshed on every profile change. */
+static uint16_t g_sustain_chans;
+
+/* A profile change: release the sustain pedal the OUTGOING profile could have
+ * left down (CC64 0 on each of its sustain channels), then learn the incoming
+ * profile's. Called beside chord_flush_all() and BEFORE faders_rearm(), so a new
+ * profile whose own sustain fader is up re-latches it on purpose. Not called on
+ * a layer change: a held pedal carries across layers (Ryan, 2026-10-04). */
+static void sustain_release_on_profile_change(void)
+{
+    for (int c = 0; c < 16; c++) {
+        if (g_sustain_chans & (1u << c)) {
+            struct midi_msg m = { .status = (uint8_t)(0xB0 | c), .d1 = 64, .d2 = 0, .len = 3 };
+            midi_out_send(&m, NULL);
+        }
+    }
+    g_sustain_chans = profile_sustain_channels(librarian_active());
+}
+
 /* Queue one chord message onto the per-tick ring (drained under the cap). */
 static void chord_tx_enqueue(uint8_t status, uint8_t d1, uint8_t d2)
 {
@@ -864,6 +884,7 @@ int main(void)
      * its state, so map_* sees a benign empty profile rather than crashing. */
     int lib_rc = librarian_init();
     printk("LIB init rc=%d active=%d\n", lib_rc, librarian_active_index());
+    g_sustain_chans = profile_sustain_channels(librarian_active());   /* sustain-off: the boot profile's */
 
     /* Restore the persisted TRS jack role. AFTER librarian_init (the value lives
      * in NVS) and after midi_out_init (the UART has claimed the pin, so taking it
@@ -1078,6 +1099,7 @@ int main(void)
         uint8_t now_active = clock_active_slot();   /* mode-aware (0..15), catches a MODE flip */
         if (now_active != last_active) {
             chord_flush_all();   /* v7: release held chords on ANY profile change (dial/host/switch) */
+            sustain_release_on_profile_change();   /* and the pedal the old profile held */
             trs_apply_profile();   /* v10: the new profile owns the jack's role */
             faders_rearm();
             /* New profile = different CCs: drop soft-takeover memory so each bank
@@ -1270,6 +1292,7 @@ int main(void)
                             kbd_state_reset(&g_kbd);
                             kbd_send_held();
                             chord_flush_all();
+                            sustain_release_on_profile_change();   /* a mode flip changes the profile too */
                             mode_flash_mode  = next;
                             mode_flash_ticks = MODE_FLASH_TICKS;
                             config_cdc_monitor_mode(next);
