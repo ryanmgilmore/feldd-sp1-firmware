@@ -29,6 +29,10 @@ int  config_cdc_fmt_mode(char *buf, int cap, int v);
 int  config_cdc_fmt_playrole(char *buf, int cap, int v);
 void config_cdc_monitor_playrole(int v);
 int  config_cdc_dtr(void);   /* 1 if a host has the port open (DTR asserted), else 0 */
+/* Another layer's line of text on this port (include the '\n'): sent whole, never
+ * inside a reply, and only while a host has the port open. Thread context only;
+ * printk to this port is not safe while a host is talking to it. */
+void config_cdc_text(const char *line);
 
 /* Pure, host-testable formatter for the active-changed monitor frame. Writes
  * {"t":"mon","k":"active","n":<n>}\n (newline-terminated, NUL-terminated) into

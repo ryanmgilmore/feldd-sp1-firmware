@@ -12,6 +12,11 @@
  *  - BRACE FRAMING: the host's trailing '\n' does not arrive over this CDC, so
  *    requests are framed by the balanced top-level '}', not newlines. Requests
  *    are flat JSON; whitespace between frames is skipped.
+ *  - ONE WRITER AT A TIME: every byte goes into the CDC driver's single tx ring
+ *    by poll_out, and cdc_tx() sleeps every 64 bytes, so a second thread
+ *    printing to this port could land inside a reply. cdc_tx() holds a mutex
+ *    for each string and handle_line() for a reply with its newline. A layer
+ *    that wants to print here uses config_cdc_text(), never printk.
  *  - Replies go out unconditionally; the unsolicited monitor stream is DTR-gated
  *    and rate-limited at the source (faders emit only on a CC change, buttons on
  *    edges — see main.c), so it can't flood the link.
@@ -114,8 +119,19 @@ int config_cdc_dtr(void){ return dtr_asserted() ? 1 : 0; }
  * ~740 bytes and fit, which is why this only bit at v9). Yield every 64 bytes so
  * the tx_fifo work item runs and frees ring space. HARDWARE-ONLY bug: the host uart
  * mock never drops, so no host test catches it; validated on the SWD burner. */
+K_MUTEX_DEFINE(g_cdc_tx_lock);   /* one writer at a time (recursive for its owner) */
+static bool g_cdc_was_open;
+
 static void cdc_tx(const char *s)
 {
+    k_mutex_lock(&g_cdc_tx_lock, K_FOREVER);
+    /* The host may still hold part of a line sent before it closed the port:
+     * end it, so the first reply after an open starts a line of its own. */
+    const bool open = dtr_asserted();
+    if (open && !g_cdc_was_open) {
+        uart_poll_out(cdc, '\n');
+    }
+    g_cdc_was_open = open;
     int i = 0;
     for (const char *p = s; *p; p++) {
         uart_poll_out(cdc, (unsigned char)*p);
@@ -123,6 +139,21 @@ static void cdc_tx(const char *s)
             k_msleep(1);   /* let the CDC tx work drain a USB transfer */
         }
     }
+    k_mutex_unlock(&g_cdc_tx_lock);
+}
+
+/* A line from another layer (status, diagnostics): sent whole, under the same
+ * lock as replies, and only while a host has the port open -- so nothing
+ * piles up for the next host to read. Include the '\n'. Thread context only. */
+void config_cdc_text(const char *line)
+{
+    k_mutex_lock(&g_cdc_tx_lock, K_FOREVER);
+    if (dtr_asserted()) {
+        cdc_tx(line);
+    } else {
+        g_cdc_was_open = false;
+    }
+    k_mutex_unlock(&g_cdc_tx_lock);
 }
 
 /* Unsolicited monitor stream — DTR-gated so it self-throttles when no host is
@@ -164,8 +195,10 @@ static void handle_line(const char *line)
         g_mon = (res.mon_on != 0);
     }
 
+    k_mutex_lock(&g_cdc_tx_lock, K_FOREVER);   /* the reply and its newline, together */
     cdc_tx(g_resp);
     cdc_tx("\n");
+    k_mutex_unlock(&g_cdc_tx_lock);
 }
 
 /* Feed one received byte to the brace-framer; dispatch a complete JSON object. */
