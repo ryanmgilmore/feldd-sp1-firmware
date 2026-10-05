@@ -86,6 +86,7 @@ function emptyBank() { return Array.from({ length: SLOTS }, () => ({ working: nu
 const cur = () => S.banks[S.mode][S.slot];
 const prof = () => cur().working;
 const hasJackCap = () => S.caps.includes('trsout') || (S.pver ?? 0) >= 10;
+const hasLabelsCap = () => S.caps.includes('labels');
 const encodeVersion = () => codec.pickEncodeVersion(S.hello);
 
 // --------------------------------------------------------- codec adapters --
@@ -200,6 +201,19 @@ async function connect(useDemo) {
         if (p) banks[Math.floor(n / SLOTS)][n % SLOTS] = { working: clone(p), saved: clone(p) };
       } catch { /* slot left empty */ }
     }
+    if (hasLabelsCap()) {
+      try {
+        const map = await dev.labelMap();
+        for (let n = 0; n < total; n++) {
+          const entry = banks[Math.floor(n / SLOTS)][n % SLOTS];
+          if (!entry.working) continue;
+          const labels = Array.from({ length: NUM_LAYERS }, () => ({}));
+          for (let l = 0; l < NUM_LAYERS; l++) if (map[n] & (1 << l)) labels[l] = codec.decodeLabelRecord(await dev.getLabels(n, l));
+          entry.working.labels = normalizeLabels(labels);
+          entry.saved.labels = normalizeLabels(labels);
+        }
+      } catch (e) { showError(e); }
+    }
     S.banks = banks;
     try { const m = await dev.getMode(); S.mode = m; } catch {}
     S.slot = S.activeAbs % SLOTS;
@@ -244,6 +258,15 @@ async function saveSlot(mode, slot) {
     throw new Error('This device runs v9 firmware, which has no per-profile TRS sync jack modes — the sync jack settings in this profile will not be saved.');
   }
   await S.dev.request('write', { n: mode * SLOTS + slot, data: encodeB64(p) });
+  if (hasLabelsCap()) {
+    const oldLabels = normalizeLabels(e.saved?.labels) || [];
+    const newLabels = normalizeLabels(p.labels) || [];
+    for (let l = 0; l < NUM_LAYERS; l++) {
+      const oldRecord = codec.encodeLabelRecord(oldLabels[l]);
+      const newRecord = codec.encodeLabelRecord(newLabels[l]);
+      if (codec.toBase64(oldRecord || new Uint8Array()) !== codec.toBase64(newRecord || new Uint8Array())) await S.dev.setLabels(mode * SLOTS + slot, l, newRecord);
+    }
+  }
   e.saved = clone(p);
 }
 function isDefaultJack(p) {
@@ -253,7 +276,15 @@ function isDefaultJack(p) {
     a.trigger_channel.every((v, i) => v === d.trigger_channel[i]) &&
     a.sync_div.every((v, i) => v === d.sync_div[i]);
 }
-const isDirty = (e) => !!e.working && (!e.saved || !sameBytes(e.saved, e.working));
+function sameLabels(a, b) {
+  for (let l = 0; l < NUM_LAYERS; l++) {
+    const left = codec.encodeLabelRecord(normalizeLabels(a)?.[l]);
+    const right = codec.encodeLabelRecord(normalizeLabels(b)?.[l]);
+    if (codec.toBase64(left || new Uint8Array()) !== codec.toBase64(right || new Uint8Array())) return false;
+  }
+  return true;
+}
+const isDirty = (e) => !!e.working && (!e.saved || !sameBytes(e.saved, e.working) || (hasLabelsCap() && !sameLabels(e.saved.labels, e.working.labels)));
 
 async function onSave() {
   S.busy = true; render();
@@ -313,7 +344,8 @@ async function onReset() {
       await S.dev.request('reset', { n });
       const r = await S.dev.request('read', { n });
       const p = r.data ? decodeB64(r.data) : r.profile;
-      S.banks[S.mode][S.slot] = { working: clone(p), saved: clone(p) };
+      const labels = normalizeLabels([]);
+      S.banks[S.mode][S.slot] = { working: {...clone(p), labels}, saved: {...clone(p), labels} };
       await refreshJackLive();
     } catch (e) { showError(e); }
   } else {
@@ -524,7 +556,7 @@ function renderDeviceSettings() {
   $('row-blethru').hidden = S.blethru == null;
   seg('thru-ble', S.blethru);
   const jackNote = hasJackCap() && S.midithru === 1 && jackOf(prof() || {}).mode !== 0 ? ' · thru is inert while this profile\'s TRS sync jack is not MIDI' : '';
-  $('fw-line').textContent = `feldd ${S.hello?.fw ?? '?'} · profile v${S.pver ?? '?'}${jackNote}`;
+  $('fw-line').textContent = `feldd ${S.hello?.fw ?? '?'} · profile v${S.pver ?? '?'}${hasLabelsCap() ? ' · labels on device' : ''}${jackNote}`;
 }
 
 function layerLocked(L) {

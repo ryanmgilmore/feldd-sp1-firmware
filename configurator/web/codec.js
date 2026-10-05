@@ -286,6 +286,56 @@ export const profileToBase64 = (profile, version = 10) => toBase64(encodeProfile
 // File-only labels, ported from feldd.com's configurator.
 export const CONTROL_IDS = ['F1', 'F2', 'F3', 'F4', 'Play', 'T1', 'T2', 'T3', 'T4', 'Vol+', 'Vol-', 'FWD', 'RWD'];
 export const LABEL_MAX_LEN = 24, NUM_LABEL_LAYERS = 8;
+export const LABEL_REC_MAX = 339, LABEL_TEXT_MAX_BYTES = 24;
+const labelEncoder = new TextEncoder();
+const labelDecoder = new TextDecoder();
+
+function cleanLabelText(value) {
+  const cleaned = String(value ?? '').trim().replace(/[\u0000-\u001F\u007F]/g, '');
+  let text = '';
+  for (const ch of cleaned) {
+    if (labelEncoder.encode(text + ch).length > LABEL_TEXT_MAX_BYTES) break;
+    text += ch;
+  }
+  return text;
+}
+export function encodeLabelRecord(layerMap) {
+  const entries = [];
+  for (let ctrl = 0; ctrl < CONTROL_IDS.length; ctrl++) {
+    const text = cleanLabelText(layerMap?.[CONTROL_IDS[ctrl]]);
+    if (text) entries.push([ctrl, labelEncoder.encode(text)]);
+  }
+  if (!entries.length) return null;
+  const bytes = new Uint8Array(1 + entries.reduce((n, [, text]) => n + 2 + text.length, 0));
+  bytes[0] = 1;
+  let offset = 1;
+  for (const [ctrl, text] of entries) {
+    bytes[offset++] = ctrl;
+    bytes[offset++] = text.length;
+    bytes.set(text, offset);
+    offset += text.length;
+  }
+  return bytes;
+}
+export function decodeLabelRecord(input) {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if (bytes.length < 4 || bytes.length > LABEL_REC_MAX || bytes[0] !== 1) throw new Error('invalid label record');
+  const labels = {};
+  let offset = 1, previous = -1, entries = 0;
+  while (offset < bytes.length) {
+    if (offset + 2 > bytes.length) throw new Error('invalid label record');
+    const ctrl = bytes[offset++], length = bytes[offset++];
+    if (ctrl >= CONTROL_IDS.length || ctrl <= previous || length < 1 || length > LABEL_TEXT_MAX_BYTES || offset + length > bytes.length) throw new Error('invalid label record');
+    const text = bytes.subarray(offset, offset + length);
+    if (text.some(byte => byte < 0x20 || byte === 0x7F)) throw new Error('invalid label record');
+    labels[CONTROL_IDS[ctrl]] = labelDecoder.decode(text);
+    previous = ctrl;
+    entries++;
+    offset += length;
+  }
+  if (!entries || offset !== bytes.length) throw new Error('invalid label record');
+  return labels;
+}
 export const allLayers = labels => Array.from({length: 8}, () => ({...labels}));
 export function faderControlId(index) {
   const id = CONTROL_IDS.slice(0, 4)[index];

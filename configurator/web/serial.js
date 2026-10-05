@@ -1,5 +1,5 @@
 // Readable port of feldd.com's WebSerial transport and demo device.
-import { decodeProfile, encodeProfile, fromBase64 } from './codec.js';
+import { decodeProfile, encodeProfile, fromBase64, toBase64, decodeLabelRecord } from './codec.js';
 import { TEMPLATES } from './templates.js';
 
 export const SERIAL_DEBUG = true;
@@ -177,6 +177,12 @@ export class Sp1Serial {
   }
   async getBleThru() { return this.bleThru({}, 0); }
   async setBleThru(value) { return this.bleThru({ v: value }, value); }
+  async labelMap() { return (await this.request('labelmap')).m; }
+  async getLabels(n, l) {
+    const data = (await this.request('getlabels', { n, l })).data;
+    return data ? fromBase64(data) : null;
+  }
+  async setLabels(n, l, bytes) { return this.request('setlabels', { n, l, data: bytes?.length ? toBase64(bytes) : '' }); }
 
   async close() {
     this._connected = false;
@@ -209,6 +215,7 @@ export class MockSp1Serial {
   connected = false;
   constructor() {
     this.profiles = Array.from({ length: 16 }, (_, index) => demoProfile(TEMPLATES[index % TEMPLATES.length].profile));
+    this.labels = Array.from({ length: 16 }, () => Array(8).fill(null));
   }
   absActive() { return 8 * this.mode + this.active[this.mode]; }
   async connect() { this.connected = true; this.timer = setInterval(() => this.tick(), 120); }
@@ -224,7 +231,7 @@ export class MockSp1Serial {
       case 'hello': return {
         t: 'hello_r', ok: true, proto: 1, pver: 10, fw: '0.1.0-demo', profiles: 16,
         active: this.absActive(), faders: 4, buttons: 9,
-        caps: ['trs', 'usbmidi', 'shift', 'led', 'mon', 'layer8', 'trsout'], pbytes: 1065, uid: 'demo0000',
+        caps: ['trs', 'usbmidi', 'shift', 'led', 'mon', 'layer8', 'trsout', 'labels'], pbytes: 1065, uid: 'demo0000',
       };
       case 'list': return {
         t: 'list_r', active: this.absActive(),
@@ -238,6 +245,17 @@ export class MockSp1Serial {
         const profile = args.profile ?? (typeof args.data === 'string' ? decodeProfile(fromBase64(args.data)) : undefined);
         if (profile) this.profiles[args.n] = demoProfile(profile);
         return { t: 'write_r', n: args.n, ok: !!profile };
+      }
+      case 'labelmap': return { t: 'labelmap_r', ok: true, m: this.labels.map((layers) => layers.reduce((mask, record, l) => mask | (record ? (1 << l) : 0), 0)) };
+      case 'getlabels': {
+        if (!Number.isInteger(args.n) || args.n < 0 || args.n >= 16 || !Number.isInteger(args.l) || args.l < 0 || args.l >= 8) return { t: 'err', ok: false, code: 'BAD_INDEX', msg: 'bad index' };
+        return { t: 'getlabels_r', ok: true, n: args.n, l: args.l, data: this.labels[args.n][args.l] ? toBase64(this.labels[args.n][args.l]) : '' };
+      }
+      case 'setlabels': {
+        if (!Number.isInteger(args.n) || args.n < 0 || args.n >= 16 || !Number.isInteger(args.l) || args.l < 0 || args.l >= 8) return { t: 'err', ok: false, code: 'BAD_INDEX', msg: 'bad index' };
+        try { this.labels[args.n][args.l] = args.data ? fromBase64(args.data) : null; if (this.labels[args.n][args.l]) decodeLabelRecord(this.labels[args.n][args.l]); }
+        catch { return { t: 'err', ok: false, code: 'BAD_LABELS', msg: 'invalid labels' }; }
+        return { t: 'setlabels_r', ok: true, n: args.n, l: args.l };
       }
       case 'setactive':
         if (typeof args.n !== 'number' || args.n < 0 || args.n >= 8) return { t: 'err', ok: false, code: 'BAD_INDEX', msg: 'bad index' };
@@ -269,9 +287,10 @@ export class MockSp1Serial {
         if (live) this.fires = (this.fires ?? 0) + 1;
         return { t: 'trspulse_r', ok: true, fires: this.fires ?? 0, busy: 0 };
       }
-      case 'reset': this.profiles[args.n] = demoProfile(TEMPLATES[0].profile); return { t: 'reset_r', n: args.n };
+      case 'reset': this.profiles[args.n] = demoProfile(TEMPLATES[0].profile); this.labels[args.n].fill(null); return { t: 'reset_r', n: args.n };
       case 'resetall':
         this.profiles = this.profiles.map(() => demoProfile(TEMPLATES[0].profile));
+        this.labels.forEach((layers) => layers.fill(null));
         this.active = [0, 0];
         return { t: 'resetall_r' };
       default: return { t: 'err', code: 'BAD_VERB' };
@@ -294,6 +313,9 @@ export class MockSp1Serial {
   async setMidiThru(value) { this.midi_thru = +!!value; return this.midi_thru; }
   async getBleThru() { return this.ble_thru; }
   async setBleThru(value) { this.ble_thru = +!!value; return this.ble_thru; }
+  async labelMap() { return (await this.request('labelmap')).m; }
+  async getLabels(n, l) { const data = (await this.request('getlabels', { n, l })).data; return data ? fromBase64(data) : null; }
+  async setLabels(n, l, bytes) { return this.request('setlabels', { n, l, data: bytes?.length ? toBase64(bytes) : '' }); }
   get activeProfile() { return this.profiles[this.absActive()]; }
   tick() {
     if (!this.monOn) return;
