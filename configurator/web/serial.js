@@ -18,6 +18,23 @@ export function detectCapabilities() {
   return { serial, midi, ok: serial && midi };
 }
 
+// A firmware that also prints text on this port can splice a reply onto the end
+// of one of its own lines ("...status text{\"t\":\"hello_r\",...}"): the reply's
+// own newline ends the line, so the reply is the line's tail. Parse the whole
+// line, else from each '{"t":' in turn. Returns the object, or null.
+export function parseReplyLine(line) {
+  const parse = (text) => {
+    try { const v = JSON.parse(text); return v && typeof v === 'object' ? v : null; } catch { return null; }
+  };
+  const whole = parse(line);
+  if (whole) return whole;
+  for (let at = line.indexOf('{"t":'); at > 0; at = line.indexOf('{"t":', at + 1)) {
+    const tail = parse(line.slice(at));
+    if (tail) return tail;
+  }
+  return null;
+}
+
 export class LineSplitter {
   decoder = new TextDecoder('utf-8');
   buf = '';
@@ -101,8 +118,7 @@ export class Sp1Serial {
   }
 
   handleLine(line) {
-    let message;
-    try { message = JSON.parse(line); } catch { return; }
+    const message = parseReplyLine(line);
     if (!message || typeof message !== 'object') return;
     if (message.t === 'mon') {
       const event = ['active', 'mode', 'playrole'].includes(message.k) ? message.k : 'mon';

@@ -185,8 +185,14 @@ async function connect(useDemo) {
     dev.on('mode', (m) => { S.mode = m.v; render(); });
     dev.on('disconnect', () => onDisconnect());
 
+    // A firmware that prints on this port can lose the first reply after the
+    // port opens (it lands in output queued while the port was closed), so try
+    // hello three times before failing open, as feldd.com does. Without it the
+    // page assumes profile v9 and the header shows "?".
     let hello = null;
-    try { hello = await dev.request('hello'); } catch { /* fail open, as feldd.com does */ }
+    for (let tries = 0; tries < 3 && !hello; tries++) {
+      try { hello = await dev.request('hello'); } catch { /* try again, then fail open */ }
+    }
     S.hello = hello;
     S.pver = typeof hello?.pver === 'number' ? hello.pver : null;
     S.caps = Array.isArray(hello?.caps) ? hello.caps : [];

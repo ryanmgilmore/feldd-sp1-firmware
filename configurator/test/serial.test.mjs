@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LineSplitter, Sp1Serial, MockSp1Serial, setSerialLogSink } from '../web/serial.js';
+import { LineSplitter, Sp1Serial, MockSp1Serial, setSerialLogSink, parseReplyLine } from '../web/serial.js';
 import { encodeProfile, toBase64 } from '../web/codec.js';
 const utf8 = new TextEncoder();
 
@@ -152,4 +152,27 @@ test('WebSerial opens the Nordic vendor at 115200 and closes stream locks', asyn
     if (previous) Object.defineProperty(globalThis, 'navigator', previous);
     else delete globalThis.navigator;
   }
+});
+
+test('a reply spliced onto the end of a firmware status line is still parsed', () => {
+  // As captured from the combined feldd + DXP1 firmware, 2026-10-05.
+  const spliced = 'diag t=7865 blk=0 FLASH erase feldd at=0x{"t":"hello_r","i":1,"ok":true,"proto":1,"pver":10,"fw":"0.31.0r","profiles":16}';
+  assert.deepEqual(parseReplyLine(spliced), { t: 'hello_r', i: 1, ok: true, proto: 1, pver: 10, fw: '0.31.0r', profiles: 16 });
+  assert.deepEqual(parseReplyLine('{"t":"read_r","i":3,"ok":true}'), { t: 'read_r', i: 3, ok: true });
+  assert.equal(parseReplyLine('dexed-fw feldd-DXP1 0.31.0r+1.0-dev i2s_rc=0 blocks=704'), null);
+  assert.equal(parseReplyLine('status {"t": broken'), null);
+  assert.equal(parseReplyLine('42'), null);
+  // A reply cut into by other output cannot be rescued, and is not misread.
+  assert.equal(parseReplyLine('x{"t":"hello_r","i":1,"pver":1dexed-fw i2s_rc=0 0}'), null);
+});
+
+test('handleLine resolves a pending request from a spliced reply', async () => {
+  const serial = transport((frame, port) => {
+    port.handleLine('dexed-fw feldd-DXP1 0.31.0r+1.0-dev i2s_rc=0 blocks=21031 us_mean=292');
+    port.handleLine('diag t=7865 blk=0 FLASH erase feldd at=0x' + JSON.stringify({ t: 'hello_r', i: frame.i, ok: true, pver: 10, fw: '0.31.0r' }));
+  });
+  const hello = await serial.request('hello');
+  assert.equal(hello.fw, '0.31.0r');
+  assert.equal(hello.pver, 10);
+  assert.equal(serial.pending.size, 0);
 });
