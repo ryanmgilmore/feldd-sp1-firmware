@@ -1043,6 +1043,125 @@ static void t_thru_switches_are_independent(void)
     assert(g_midithru == 0 && g_blethru == 0);
 }
 
+/* ---- sp1dev labels: labelmap / getlabels / setlabels (labels/SPEC.md §2) ---- */
+#include "label_rec.h"
+static uint8_t g_lrec[16][8][LABEL_REC_MAX];
+static int     g_llen[16][8];
+static int     g_lfail;
+static int mock_label_map(uint8_t m[16])
+{
+    if (g_lfail) return g_lfail;
+    for (int n = 0; n < 16; n++) {
+        m[n] = 0;
+        for (int l = 0; l < 8; l++) if (g_llen[n][l]) m[n] |= (uint8_t)(1u << l);
+    }
+    return 0;
+}
+static int mock_label_get(uint8_t n, uint8_t l, uint8_t *buf, int cap)
+{
+    if (g_lfail) return g_lfail;
+    if (g_llen[n][l] > cap) return -1;
+    memcpy(buf, g_lrec[n][l], (size_t)g_llen[n][l]);
+    return g_llen[n][l];
+}
+static int mock_label_set(uint8_t n, uint8_t l, const uint8_t *buf, int len)
+{
+    if (g_lfail) return g_lfail;
+    memcpy(g_lrec[n][l], buf, (size_t)len);
+    g_llen[n][l] = len;
+    return 0;
+}
+static struct proto_store label_store(void)
+{
+    struct proto_store s = make_store();
+    s.label_map = mock_label_map;
+    s.label_get = mock_label_get;
+    s.label_set = mock_label_set;
+    memset(g_llen, 0, sizeof g_llen);
+    g_lfail = 0;
+    return s;
+}
+
+static void t_labels_caps(void)
+{
+    char out[512];
+    struct proto_store plain = make_store();
+    assert(proto_handle(&plain, "{\"t\":\"hello\",\"i\":1}", out, (int)sizeof out, NULL) > 0);
+    assert(!strstr(out, "\"labels\""));                      /* no store: not advertised */
+    assert(proto_handle(&plain, "{\"t\":\"labelmap\",\"i\":2}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "UNSUPPORTED"));
+    assert(proto_handle(&plain, "{\"t\":\"getlabels\",\"i\":3,\"n\":0,\"l\":0}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "UNSUPPORTED"));
+    struct proto_store s = label_store();
+    assert(proto_handle(&s, "{\"t\":\"hello\",\"i\":4}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "\"mon\",\"labels\"]"));              /* advertised, after the rest */
+}
+
+static void t_labels_round_trip(void)
+{
+    char out[1536], req[1536], b64[LABEL_B64_MAX + 1];
+    struct proto_store s = label_store();
+    /* "Sustain" on F2 (ctrl 1), "C maj" on T1 (ctrl 5) */
+    const uint8_t rec[] = { 1, 1, 7, 'S','u','s','t','a','i','n', 5, 5, 'C',' ','m','a','j' };
+    assert(label_b64_encode(rec, (int)sizeof rec, b64, (int)sizeof b64) > 0);
+    snprintf(req, sizeof req, "{\"t\":\"setlabels\",\"i\":5,\"n\":7,\"l\":0,\"data\":\"%s\"}", b64);
+    assert(proto_handle(&s, req, out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "\"t\":\"setlabels_r\"") && strstr(out, "\"ok\":true") && strstr(out, "\"n\":7"));
+    assert(g_llen[7][0] == (int)sizeof rec);
+    assert(proto_handle(&s, "{\"t\":\"getlabels\",\"i\":6,\"n\":7,\"l\":0}", out, (int)sizeof out, NULL) > 0);
+    char want[600];
+    snprintf(want, sizeof want, "\"data\":\"%s\"", b64);
+    assert(strstr(out, want));
+    assert(proto_handle(&s, "{\"t\":\"labelmap\",\"i\":7}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "\"m\":[0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0]"));
+    /* an empty layer reads as "" */
+    assert(proto_handle(&s, "{\"t\":\"getlabels\",\"i\":8,\"n\":7,\"l\":3}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "\"data\":\"\""));
+    /* "" deletes */
+    assert(proto_handle(&s, "{\"t\":\"setlabels\",\"i\":9,\"n\":7,\"l\":0,\"data\":\"\"}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "\"ok\":true") && g_llen[7][0] == 0);
+}
+
+static void t_labels_rejects(void)
+{
+    char out[1536], req[1536], b64[LABEL_B64_MAX + 1];
+    struct proto_store s = label_store();
+    assert(proto_handle(&s, "{\"t\":\"getlabels\",\"i\":1,\"n\":16,\"l\":0}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "BAD_INDEX"));                         /* slot 16 */
+    assert(proto_handle(&s, "{\"t\":\"getlabels\",\"i\":2,\"n\":0,\"l\":8}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "BAD_INDEX"));                         /* layer 8 */
+    assert(proto_handle(&s, "{\"t\":\"setlabels\",\"i\":3,\"n\":0,\"l\":0}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "BAD_LABELS"));                        /* no data */
+    assert(proto_handle(&s, "{\"t\":\"setlabels\",\"i\":4,\"n\":0,\"l\":0,\"data\":\"!!!!\"}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "BAD_LABELS"));                        /* not base64 */
+    const uint8_t bad[] = { 1, 13, 1, 'x' };                  /* control 13 does not exist */
+    label_b64_encode(bad, (int)sizeof bad, b64, (int)sizeof b64);
+    snprintf(req, sizeof req, "{\"t\":\"setlabels\",\"i\":5,\"n\":0,\"l\":0,\"data\":\"%s\"}", b64);
+    assert(proto_handle(&s, req, out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "BAD_LABELS") && g_llen[0][0] == 0);   /* nothing stored */
+    g_lfail = -5;
+    assert(proto_handle(&s, "{\"t\":\"labelmap\",\"i\":6}", out, (int)sizeof out, NULL) > 0);
+    assert(strstr(out, "NVS_FAIL"));
+}
+
+/* The largest record fits the protocol's 1536-byte line both ways. */
+static void t_labels_largest(void)
+{
+    char out[1536], req[1536], b64[LABEL_B64_MAX + 1];
+    struct proto_store s = label_store();
+    uint8_t rec[LABEL_REC_MAX];
+    int o = 0;
+    rec[o++] = 1;
+    for (int c = 0; c < 13; c++) { rec[o++] = (uint8_t)c; rec[o++] = 24; memset(rec + o, 'w', 24); o += 24; }
+    assert(o == LABEL_REC_MAX && label_rec_valid(rec, o));
+    assert(label_b64_encode(rec, o, b64, (int)sizeof b64) == LABEL_B64_MAX);
+    int rl = snprintf(req, sizeof req, "{\"t\":\"setlabels\",\"i\":1,\"n\":15,\"l\":7,\"data\":\"%s\"}", b64);
+    assert(rl < 1536);
+    assert(proto_handle(&s, req, out, (int)sizeof out, NULL) > 0 && strstr(out, "\"ok\":true"));
+    int gl = proto_handle(&s, "{\"t\":\"getlabels\",\"i\":2,\"n\":15,\"l\":7}", out, (int)sizeof out, NULL);
+    assert(gl > 0 && gl < 1536 && strstr(out, b64));
+}
+
 int main(void)
 {
     t_hello();
@@ -1076,6 +1195,10 @@ int main(void)
     t_trsmode_verb();
     t_trsdiv_verb();
     t_trsmode_trsdiv_independent();
+    t_labels_caps();
+    t_labels_round_trip();
+    t_labels_rejects();
+    t_labels_largest();
     printf("all protocol tests passed\n");
     return 0;
 }

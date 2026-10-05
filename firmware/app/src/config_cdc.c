@@ -25,6 +25,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/hwinfo.h>
 #include "config_cdc.h"
+#include "labels.h"
 #include "protocol.h"
 #include "librarian.h"
 #include "trigger_out.h"
@@ -129,12 +130,36 @@ static int cdc_set_trsdiv(uint8_t v)
     return trigger_out_set_divider(v);
 }
 
+/* sp1dev labels: a profile reset to its default also clears its labels, which
+ * named the controls of the profile it replaced. A failed label clear does not
+ * fail the reset: the profile is what the host asked for. */
+static int cdc_reset(uint8_t n)
+{
+    int rc = librarian_reset(n);
+    if (rc == 0) {
+        (void)labels_clear_slot(n);
+    }
+    return rc;
+}
+
+static int cdc_reset_all(void)
+{
+    int rc = librarian_reset_all();
+    if (rc == 0) {
+        (void)labels_clear_all();
+    }
+    return rc;
+}
+
 static const struct proto_store g_store = {
     .read       = librarian_read,
     .write      = librarian_write,
     .set_active = librarian_set_active,
-    .reset      = librarian_reset,
-    .reset_all  = librarian_reset_all,
+    .reset      = cdc_reset,
+    .reset_all  = cdc_reset_all,
+    .label_map  = labels_map,
+    .label_get  = labels_get,
+    .label_set  = labels_set,
     .get_active = librarian_active_index,
     .get_mode   = librarian_mode,
     .set_mode   = librarian_set_mode,

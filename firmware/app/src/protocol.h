@@ -42,6 +42,14 @@ struct proto_store {
      * setactive against `profiles` (=16) would let a host setactive n=8..15 pass
      * the gate, then get -EINVAL from a within-only set_active and be mislabeled
      * NVS_FAIL, so setactive is bounded by `bank_profiles` instead. */
+    /* On-device labels (sp1dev labels/SPEC.md §2): one record per GLOBAL slot n
+     * and layer l. NULL = no label store: caps omit "labels" and the three
+     * verbs answer UNSUPPORTED. label_map fills m[16] (bit l = layer l has a
+     * record); label_get returns the record's length, 0 if none, <0 on error;
+     * label_set stores a validated record, or deletes it when len is 0. */
+    int (*label_map)(uint8_t m[16]);
+    int (*label_get)(uint8_t n, uint8_t l, uint8_t *buf, int cap);
+    int (*label_set)(uint8_t n, uint8_t l, const uint8_t *buf, int len);
     uint8_t profiles;          /* GLOBAL slot count (read/write/reset bound) = NUM_PROFILES */
     uint8_t bank_profiles;     /* WITHIN-bank profile count (setactive bound) = NUM_BANK_PROFILES */
     uint8_t faders, buttons;

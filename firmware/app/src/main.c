@@ -50,6 +50,7 @@
 #include "usbdev.h"
 #include "usb_hid.h"
 #include "kbd_hid.h"
+#include "labels.h"
 #include "librarian.h"
 #include "lib_bank.h"
 #include "config_cdc.h"
@@ -862,6 +863,8 @@ int main(void)
      * its state, so map_* sees a benign empty profile rather than crashing. */
     int lib_rc = librarian_init();
     printk("LIB init rc=%d active=%d\n", lib_rc, librarian_active_index());
+    int lbl_rc = labels_init();   /* sp1dev labels: the store beside the profiles */
+    printk("LBL init rc=%d\n", lbl_rc);
 
     /* Restore the persisted TRS jack role. AFTER librarian_init (the value lives
      * in NVS) and after midi_out_init (the UART has claimed the pin, so taking it
